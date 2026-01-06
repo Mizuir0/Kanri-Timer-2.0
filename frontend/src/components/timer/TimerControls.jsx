@@ -1,5 +1,5 @@
 import { useTimerStore } from '../../stores/timerStore';
-import { startTimer } from '../../services/api';
+import { startTimer, pauseTimer, resumeTimer, skipTimer } from '../../services/api';
 import Button from '../common/Button';
 
 const TimerControls = () => {
@@ -12,6 +12,36 @@ const TimerControls = () => {
     } catch (error) {
       console.error('タイマーの開始に失敗しました:', error);
       alert('タイマーの開始に失敗しました');
+    }
+  };
+
+  const handlePause = async () => {
+    try {
+      await pauseTimer();
+    } catch (error) {
+      console.error('タイマーの一時停止に失敗しました:', error);
+      alert('タイマーの一時停止に失敗しました');
+    }
+  };
+
+  const handleResume = async () => {
+    try {
+      await resumeTimer();
+    } catch (error) {
+      console.error('タイマーの再開に失敗しました:', error);
+      alert('タイマーの再開に失敗しました');
+    }
+  };
+
+  const handleSkip = async () => {
+    if (!confirm('このタイマーをスキップして次に進みますか？')) {
+      return;
+    }
+    try {
+      await skipTimer();
+    } catch (error) {
+      console.error('タイマーのスキップに失敗しました:', error);
+      alert('タイマーのスキップに失敗しました');
     }
   };
 
@@ -29,7 +59,6 @@ const TimerControls = () => {
           </Button>
         )}
 
-        {/* Step 2で追加
         {isRunning && !isPaused && (
           <>
             <Button onClick={handlePause} variant="warning">
@@ -51,7 +80,6 @@ const TimerControls = () => {
             </Button>
           </>
         )}
-        */}
       </div>
     </div>
   );
