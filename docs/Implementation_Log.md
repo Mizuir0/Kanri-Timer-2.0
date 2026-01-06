@@ -389,18 +389,133 @@ feat: バックエンド設定とモデル定義を完了（MVP Step 1）
 
 ---
 
+#### 4. Reactプロジェクト作成（完了） ✅
+
+**実装日**: 2026-01-06
+
+**作成したファイル（14個）**:
+
+##### プロジェクト設定ファイル
+1. `frontend/package.json` - npm パッケージ定義
+   - **主な内容**: React 18, Vite 5, TailwindCSS 3, Zustand 4, Axios 1
+   - **なぜ必要？**: フロントエンドのライブラリ依存関係を定義
+
+2. `frontend/vite.config.js` - Vite（ビルドツール）設定
+   - **主な内容**: Reactプラグイン、開発サーバーポート5173、ホットリロード設定
+   - **なぜ必要？**: 開発サーバーとビルドプロセスを設定
+
+3. `frontend/tailwind.config.js` - TailwindCSS設定
+   - **主な内容**: JSX/TSXファイルをスキャン対象に設定
+   - **なぜ必要？**: CSSクラスの生成範囲を指定
+
+4. `frontend/postcss.config.js` - PostCSS設定
+   - **主な内容**: TailwindCSSとAutoprefixerを有効化
+   - **なぜ必要？**: TailwindCSSを処理するため
+
+5. `frontend/.eslintrc.cjs` - ESLint設定
+   - **主な内容**: React推奨ルール、未使用変数警告など
+   - **なぜ必要？**: コード品質を維持
+
+6. `frontend/index.html` - HTMLエントリポイント
+   - **主な内容**: Reactアプリのマウントポイント（`<div id="root">`）
+   - **なぜ必要？**: Reactアプリを描画する起点
+
+##### 状態管理
+7. `frontend/src/stores/timerStore.js` - Zustand Store（状態管理）
+   - **主な内容**:
+     ```javascript
+     {
+       currentTimer: null,        // 現在のタイマー情報
+       remainingSeconds: 0,       // 残り秒数
+       isRunning: false,          // 実行中フラグ
+       isPaused: false,           // 一時停止フラグ
+       updateTimerState: (state) => {} // 状態更新関数
+     }
+     ```
+   - **なぜ必要？**: バックエンドから取得したタイマー状態をアプリ全体で共有
+
+##### API通信
+8. `frontend/src/services/api.js` - API通信サービス
+   - **主な内容**:
+     - `getTimerState()` - タイマー状態取得（GET /api/timer-state/）
+     - `startTimer()` - タイマー開始（POST /api/timer-state/start/）
+   - **なぜ必要？**: バックエンドAPIとの通信を一元管理
+
+##### ユーティリティ
+9. `frontend/src/utils/timeFormat.js` - 時間フォーマット関数
+   - **主な内容**:
+     ```javascript
+     formatTime(seconds) => "MM:SS" // 例: 900秒 → "15:00"
+     ```
+   - **なぜ必要？**: 秒数を「分:秒」形式で表示
+
+##### コンポーネント（共通）
+10. `frontend/src/components/common/Button.jsx` - ボタンコンポーネント
+    - **主な内容**: primary, success, warning, secondaryの4種類のスタイル
+    - **なぜ必要？**: 統一されたボタンデザインを提供
+
+##### コンポーネント（タイマー）
+11. `frontend/src/components/timer/CurrentTimer.jsx` - 現在のタイマー表示
+    - **主な内容**:
+      - バンド名表示
+      - 残り時間表示（8xlサイズ、MM:SS形式）
+      - 状態バッジ（実行中🔴 / 一時停止⏸️ / 待機中）
+      - メンバー名表示
+    - **なぜ必要？**: リハーサル中にタイマーを大きく表示
+
+12. `frontend/src/components/timer/TimerControls.jsx` - タイマー操作ボタン
+    - **主な内容**:
+      - 開始ボタン（`isRunning`がfalseの時のみ表示）
+      - ※ 一時停止・スキップはStep 2で実装（コメントアウト済み）
+    - **なぜ必要？**: タイマーの開始操作を提供
+
+##### メインアプリ
+13. `frontend/src/App.jsx` - Reactルートコンポーネント
+    - **主な内容**:
+      - **ポーリング処理**: 1秒ごとに`getTimerState()`を実行してタイマー状態を取得
+      - **クライアント側カウントダウン**: 表示をスムーズにするため、クライアント側でも1秒ごとに残り秒数を減算
+      - レイアウト: ヘッダー（KanriTimer 2.0）+ タイマー表示 + 操作ボタン
+    - **なぜ必要？**: アプリ全体を統合し、ポーリングによるリアルタイム更新を実現
+
+14. `frontend/src/main.jsx` - Reactエントリポイント
+    - **主な内容**: ReactDOM.createRootでAppコンポーネントをマウント
+    - **なぜ必要？**: Reactアプリを起動
+
+15. `frontend/src/styles/index.css` - グローバルCSS
+    - **主な内容**: TailwindCSSのディレクティブ（@tailwind base, components, utilities）
+    - **なぜ必要？**: TailwindCSSを読み込み
+
+**実装した機能**:
+- **ポーリングベースの状態同期**: WebSocketの代わりに1秒ごとにAPIをポーリング（Step 4でWebSocketに移行予定）
+- **クライアント側カウントダウン**: ポーリング間隔のラグを補完するため、クライアント側でも秒数を減算
+- **レスポンシブUI**: TailwindCSSによる美しいデザイン
+- **状態管理**: Zustandで軽量かつシンプルな状態管理
+
+**技術的なポイント**:
+- **二重のカウントダウン処理**:
+  1. サーバー側: Celery Beatが1秒ごとに状態更新
+  2. クライアント側: ポーリング（1秒）+ ローカルカウントダウン（1秒）で滑らかな表示
+- **MVP Step 1の制約**:
+  - WebSocket未実装のため、ポーリングで代替
+  - 一時停止・スキップ機能はStep 2に延期
+  - タイマー一覧表示もStep 2に延期
+
+**Gitコミット**: 次のステップで実行予定
+
+---
+
 ## 📊 全体の進捗率
 
 - **Phase 1（設計）**: 100% ✅
 - **Phase 2（実装アプローチ決定）**: 100% ✅
-- **MVP Step 1**: 60%（バックエンド完了、フロントエンド未着手）
+- **MVP Step 1**: 90%（バックエンド・フロントエンド完了、動作確認前）
   - ✅ Docker環境構築
   - ✅ バックエンドディレクトリ構造
   - ✅ Django設定ファイル
   - ✅ モデル定義
   - ✅ API実装（最小限）
   - ✅ Celeryタスク
-  - ⏳ Reactプロジェクト
+  - ✅ Reactプロジェクト
   - ⏳ 初期データ投入
   - ⏳ 動作確認
 
@@ -408,16 +523,16 @@ feat: バックエンド設定とモデル定義を完了（MVP Step 1）
 
 ## 🎯 次のアクション
 
-**Step 1-4: Reactプロジェクト作成**
+**Step 1-5: 初期データ投入と動作確認**
 
-1. フロントエンドディレクトリ構成作成
-2. package.json作成（React, Vite, TailwindCSS, Zustand）
-3. 最小限のコンポーネント実装
-   - App.jsx
-   - CurrentTimer.jsx
-   - TimerControls.jsx
-4. Zustand Store設定
-5. API通信設定
+1. Docker Composeで全サービス起動
+2. Django migrateでデータベース作成
+3. 管理画面でスーパーユーザー作成
+4. テストデータ投入（メンバー1件、タイマー1件）
+5. 動作確認（http://localhost:5173）
+   - タイマー表示確認
+   - 開始ボタン押下
+   - カウントダウン確認
 
 ---
 
