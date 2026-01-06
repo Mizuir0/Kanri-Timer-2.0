@@ -37,7 +37,7 @@ services:
       context: ./backend
       dockerfile: ../docker/backend.Dockerfile
     container_name: kanritimer_web
-    command: python manage.py runserver 0.0.0.0:8000
+    command: daphne -b 0.0.0.0 -p 8000 backend.asgi:application
     volumes:
       - ./backend:/app
     ports:

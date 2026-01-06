@@ -16,13 +16,13 @@ django_asgi_app = get_asgi_application()
 # Channelsのルーティングをインポート（Djangoアプリ初期化後）
 from channels.routing import ProtocolTypeRouter, URLRouter
 from channels.auth import AuthMiddlewareStack
-# from apps.timers.routing import websocket_urlpatterns  # Step 4で追加
+from apps.timers.routing import websocket_urlpatterns
 
 application = ProtocolTypeRouter({
     "http": django_asgi_app,
-    # "websocket": AuthMiddlewareStack(  # Step 4で追加
-    #     URLRouter(
-    #         websocket_urlpatterns
-    #     )
-    # ),
+    "websocket": AuthMiddlewareStack(
+        URLRouter(
+            websocket_urlpatterns
+        )
+    ),
 })

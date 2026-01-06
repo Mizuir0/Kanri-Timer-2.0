@@ -1,6 +1,7 @@
 from celery import shared_task
 from django.utils import timezone
 from .models import TimerState
+from .utils import broadcast_timer_state
 import logging
 
 logger = logging.getLogger(__name__)
@@ -34,20 +35,8 @@ def update_timer_state():
             f'経過={int(elapsed)}秒 残り={int(remaining)}秒'
         )
 
-        # TODO: Step 4でWebSocket配信を実装
-        # channel_layer = get_channel_layer()
-        # async_to_sync(channel_layer.group_send)(
-        #     'timer_updates',
-        #     {
-        #         'type': 'timer.updated',
-        #         'data': {
-        #             'timer_id': timer_state.current_timer.id,
-        #             'elapsed_seconds': int(elapsed),
-        #             'remaining_seconds': int(remaining),
-        #             'total_time_difference': timer_state.total_time_difference_display
-        #         }
-        #     }
-        # )
+        # WebSocketで配信
+        broadcast_timer_state()
 
         # タイマー完了チェック（0:00になった？）
         if remaining <= 0:

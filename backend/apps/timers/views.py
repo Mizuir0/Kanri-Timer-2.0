@@ -5,6 +5,7 @@ from django.utils import timezone
 from datetime import timedelta
 from .models import Timer, TimerState
 from .serializers import TimerStateSerializer, TimerSerializer
+from .utils import broadcast_timer_state, broadcast_timer_list
 import logging
 
 logger = logging.getLogger(__name__)
@@ -77,6 +78,9 @@ def start_timer(request):
 
         logger.info(f'タイマー開始: {timer.band_name}')
 
+        # WebSocketで配信
+        broadcast_timer_state()
+
         serializer = TimerStateSerializer(timer_state)
         return Response({
             'detail': 'タイマーを開始しました。',
@@ -143,6 +147,9 @@ def pause_timer(request):
 
         logger.info(f'タイマー一時停止: {timer_state.current_timer.band_name if timer_state.current_timer else "None"}')
 
+        # WebSocketで配信
+        broadcast_timer_state()
+
         serializer = TimerStateSerializer(timer_state)
         return Response({
             'detail': 'タイマーを一時停止しました。',
@@ -188,6 +195,9 @@ def resume_timer(request):
         timer_state.save()
 
         logger.info(f'タイマー再開: {timer_state.current_timer.band_name if timer_state.current_timer else "None"}')
+
+        # WebSocketで配信
+        broadcast_timer_state()
 
         serializer = TimerStateSerializer(timer_state)
         return Response({
@@ -254,6 +264,10 @@ def skip_timer(request):
 
             logger.info(f'次のタイマー自動開始: {next_timer.band_name}')
 
+            # WebSocketで配信（状態とリストの両方）
+            broadcast_timer_state()
+            broadcast_timer_list()
+
             serializer = TimerStateSerializer(timer_state)
             return Response({
                 'detail': 'タイマーをスキップして次に進みました。',
@@ -271,6 +285,10 @@ def skip_timer(request):
             timer_state.save()
 
             logger.info('全タイマー完了')
+
+            # WebSocketで配信（状態とリストの両方）
+            broadcast_timer_state()
+            broadcast_timer_list()
 
             serializer = TimerStateSerializer(timer_state)
             return Response({

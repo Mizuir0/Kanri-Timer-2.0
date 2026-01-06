@@ -1,6 +1,6 @@
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { useTimerStore } from './stores/timerStore';
-import { getTimerState, getTimers } from './services/api';
+import websocketService from './services/websocket';
 import useKeyboard from './hooks/useKeyboard';
 import CurrentTimer from './components/timer/CurrentTimer';
 import TimerControls from './components/timer/TimerControls';
@@ -9,57 +9,52 @@ import TimerList from './components/timer/TimerList';
 
 function App() {
   const { updateTimerState, updateTimerList, remainingSeconds, setRemainingSeconds } = useTimerStore();
-  const pollingIntervalRef = useRef(null);
-  const timerListPollingRef = useRef(null);
 
   // キーボードショートカットを有効化（MVP Step 2）
   useKeyboard();
 
-  // 初回読み込み時にタイマー状態を取得
+  // WebSocket接続とイベントリスナー設定（MVP Step 4）
   useEffect(() => {
-    const fetchTimerState = async () => {
-      try {
-        const data = await getTimerState();
-        updateTimerState(data);
-      } catch (error) {
-        console.error('タイマー状態の取得に失敗しました:', error);
-      }
+    // WebSocket接続
+    websocketService.connect();
+
+    // タイマー状態更新イベント
+    const handleTimerStateUpdate = (data) => {
+      console.log('[App] タイマー状態更新:', data);
+      updateTimerState(data);
     };
 
-    fetchTimerState();
+    // タイマーリスト更新イベント
+    const handleTimerListUpdate = (data) => {
+      console.log('[App] タイマーリスト更新:', data);
+      updateTimerList(data);
+    };
 
-    // 1秒ごとにポーリング（MVP Step 1ではWebSocket未実装）
-    pollingIntervalRef.current = setInterval(fetchTimerState, 1000);
+    // 接続確立イベント
+    const handleConnectionEstablished = () => {
+      console.log('[App] WebSocket接続確立');
+    };
 
+    // 接続切断イベント
+    const handleConnectionLost = () => {
+      console.warn('[App] WebSocket接続切断 - 再接続を試みます');
+    };
+
+    // リスナー登録
+    websocketService.on('timer_state_updated', handleTimerStateUpdate);
+    websocketService.on('timer_list_updated', handleTimerListUpdate);
+    websocketService.on('connection_established', handleConnectionEstablished);
+    websocketService.on('connection_lost', handleConnectionLost);
+
+    // クリーンアップ
     return () => {
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current);
-      }
+      websocketService.off('timer_state_updated', handleTimerStateUpdate);
+      websocketService.off('timer_list_updated', handleTimerListUpdate);
+      websocketService.off('connection_established', handleConnectionEstablished);
+      websocketService.off('connection_lost', handleConnectionLost);
+      websocketService.disconnect();
     };
-  }, [updateTimerState]);
-
-  // タイマーリストのポーリング（MVP Step 2）
-  useEffect(() => {
-    const fetchTimerList = async () => {
-      try {
-        const timers = await getTimers();
-        updateTimerList(timers);
-      } catch (error) {
-        console.error('タイマーリストの取得に失敗しました:', error);
-      }
-    };
-
-    fetchTimerList();
-
-    // 1秒ごとにポーリング
-    timerListPollingRef.current = setInterval(fetchTimerList, 1000);
-
-    return () => {
-      if (timerListPollingRef.current) {
-        clearInterval(timerListPollingRef.current);
-      }
-    };
-  }, [updateTimerList]);
+  }, [updateTimerState, updateTimerList]);
 
   // クライアント側でカウントダウン（表示のスムーズさのため）
   useEffect(() => {
@@ -99,10 +94,10 @@ function App() {
         {/* 開発情報 */}
         <div className="bg-green-50 border-l-4 border-green-500 p-4 mt-6">
           <p className="text-sm text-green-700">
-            <strong>MVP Step 2:</strong> タイマー一覧と押し巻き表示
+            <strong>MVP Step 4:</strong> WebSocketリアルタイム同期
           </p>
           <p className="text-xs text-green-600 mt-1">
-            ✅ タイマーリスト表示 | ✅ 全体の押し巻き表示 | ✅ 一時停止・スキップ | ✅ キーボードショートカット (Space: 一時停止/再開, →: スキップ)
+            ✅ WebSocket接続 | ✅ リアルタイム同期 | ✅ 自動再接続
           </p>
         </div>
       </main>
