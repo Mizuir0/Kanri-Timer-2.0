@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { getMembers } from '../services/api';
 
 export const useTimerStore = create((set) => ({
   // タイマー状態
@@ -11,6 +12,11 @@ export const useTimerStore = create((set) => ({
   allTimers: [],
   totalTimeDifference: 0,
   totalTimeDifferenceDisplay: '',
+
+  // CRUD状態（MVP Step 3）
+  isTimerFormOpen: false,
+  editingTimer: null,
+  members: [],
 
   // アクション
   setCurrentTimer: (timer) => set({ currentTimer: timer }),
@@ -60,5 +66,19 @@ export const useTimerStore = create((set) => ({
       totalTimeDifference: totalDiff,
       totalTimeDifferenceDisplay: displayText,
     });
+  },
+
+  // CRUD アクション（MVP Step 3）
+  openTimerForm: (timer = null) => set({ isTimerFormOpen: true, editingTimer: timer }),
+  closeTimerForm: () => set({ isTimerFormOpen: false, editingTimer: null }),
+  setMembers: (members) => set({ members }),
+
+  fetchMembers: async () => {
+    try {
+      const members = await getMembers();
+      set({ members });
+    } catch (error) {
+      console.error('Failed to fetch members:', error);
+    }
   },
 }));

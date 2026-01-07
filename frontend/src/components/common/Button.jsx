@@ -1,4 +1,4 @@
-const Button = ({ onClick, children, variant = 'primary', disabled = false, className = '' }) => {
+const Button = ({ onClick, children, variant = 'primary', disabled = false, className = '', type = 'button' }) => {
   const baseClasses = 'px-6 py-3 rounded-lg font-semibold transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed';
 
   const variantClasses = {
@@ -10,6 +10,7 @@ const Button = ({ onClick, children, variant = 'primary', disabled = false, clas
 
   return (
     <button
+      type={type}
       onClick={onClick}
       disabled={disabled}
       className={`${baseClasses} ${variantClasses[variant]} ${className}`}
