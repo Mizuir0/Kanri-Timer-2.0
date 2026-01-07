@@ -765,11 +765,447 @@ MVP Step 2では、タイマー一覧表示、全体の押し巻き表示、一�
 
 ## 📝 MVP Step 3 の詳細進捗
 
-### ⏭️ スキップ（未着手）
+### ✅ 完了した作業（2026-01-07）
 
-**目標**: PC画面からタイマーを追加・編集・削除できる
+**実装日**: 2026-01-07
 
-**理由**: Step 2完了後、よりユーザー体験を向上させるため、先にWebSocketリアルタイム同期（Step 4）を実装することを決定。CRUD機能は後回し。
+**注**: Step 2完了後、先にStep 4（WebSocketリアルタイム同期）を実装。その後、Step 3（CRUD機能）を実装しました。
+
+MVP Step 3では、タイマーのCRUD機能（作成・編集・削除・並び替え）を実装しました。PC専用のUI（ドラッグ&ドロップ、ホバー時の編集・削除ボタン）を採用し、モバイルでは表示しない設計としています。
+
+---
+
+#### Phase A: バックエンド Member API実装（完了） ✅
+
+**新規作成したファイル**:
+
+##### 1. `backend/apps/members/views.py`
+- **何をするファイル？**: メンバー一覧APIのビュー関数
+- **主な内容**:
+  - `get_members()` - GET /api/members/ - アクティブなメンバー一覧を取得（名前順）
+- **なぜ必要？**: タイマー作成・編集時のドロップダウンでメンバーを選択するため
+
+##### 2. `backend/apps/members/serializers.py`
+- **何をするファイル？**: Memberモデルのシリアライザ
+- **主な内容**:
+  - `MemberSerializer` - id, name, is_active をJSON形式で返す
+- **なぜ必要？**: REST APIでMemberデータをJSON形式で返すため
+
+##### 3. `backend/apps/members/urls.py`
+- **何をするファイル？**: メンバーAPIのURLルーティング
+- **主な内容**:
+  - `path('', views.get_members, name='get_members')`
+- **なぜ必要？**: /api/members/ へのルーティングを定義
+
+---
+
+**編集したファイル（バックエンド）**:
+
+##### 4. `backend/backend/urls.py`
+- **追加した内容**:
+  - `path('api/members/', include('apps.members.urls'))` - メンバーAPIルート追加
+- **なぜ必要？**: プロジェクトレベルでメンバーAPIのルーティングを有効化
+
+---
+
+#### Phase B: バックエンド Timer CRUD APIs実装（完了） ✅
+
+**編集したファイル**:
+
+##### 1. `backend/apps/timers/views.py`
+- **追加したインポート**:
+  - `from django.db import models, transaction` - F式とトランザクション対応
+- **追加した4つのAPI関数**:
+
+  **1. `create_timer(request)`** - POST /api/timers/create/
+  - **機能**: 新規タイマー作成
+  - **バリデーション**:
+    - `band_name`: 必須、空白不可
+    - `minutes`: 必須、> 0
+    - `member1_id`, `member2_id`, `member3_id`: 3名全員必須、存在確認、アクティブチェック
+    - 重複チェック: 同じメンバーを複数回選択不可
+  - **処理**:
+    - 順序を自動割り当て（`max(order) + 1`）
+    - タイマー作成
+    - **WebSocketブロードキャスト**: `broadcast_timer_list()` 呼び出し
+  - **なぜ必要？**: PC画面からタイマーを追加できるようにするため
+
+  **2. `update_timer(request, timer_id)`** - PUT /api/timers/{id}/
+  - **機能**: 既存タイマー編集
+  - **バリデーション**:
+    - 完了済みタイマー: 編集不可（`is_completed == True`）
+    - 実行中タイマー: 編集不可（`is_running && current_timer.id == timer_id`）
+    - 同様のフィールドバリデーション（band_name, minutes, members）
+  - **処理**:
+    - フィールド更新
+    - **WebSocketブロードキャスト**: `broadcast_timer_list()` 呼び出し
+  - **なぜ必要？**: タイマー情報を修正できるようにするため
+
+  **3. `delete_timer(request, timer_id)`** - DELETE /api/timers/{id}/delete/
+  - **機能**: タイマー削除
+  - **バリデーション**:
+    - 完了済みタイマー: 削除不可
+    - 実行中タイマー: 削除不可
+  - **処理**:
+    - 削除前に `deleted_order` を保存
+    - タイマー削除
+    - **順序の詰め処理**: `Timer.objects.filter(order__gt=deleted_order).update(order=models.F('order') - 1)`
+    - **WebSocketブロードキャスト**: `broadcast_timer_list()` 呼び出し
+  - **技術的なポイント**: 削除後の順序に隙間が生じないよう、F式で一括更新
+  - **なぜ必要？**: 不要なタイマーを削除できるようにするため
+
+  **4. `reorder_timers(request)`** - POST /api/timers/reorder/
+  - **機能**: ドラッグ&ドロップ並び替え
+  - **リクエストボディ**: `{ "timer_ids": [3, 1, 2, 4] }` - 並び替え後のID配列
+  - **処理**:
+    - トランザクション内で全タイマーの `order` を更新
+    - **WebSocketブロードキャスト**: `broadcast_timer_list()` 呼び出し
+  - **技術的なポイント**: `@transaction.atomic` デコレータで原子性を保証
+  - **なぜ必要？**: タイマーの実行順序を変更できるようにするため
+
+- **技術的なポイント**:
+  - **重要**: 全CRUD操作で `broadcast_timer_list()` を呼び出し、WebSocketで全クライアントに即座に反映
+  - F式（`models.F('order') - 1`）で安全な一括更新
+  - トランザクションで並び替えの一貫性を保証
+
+##### 2. `backend/apps/timers/urls.py`
+- **追加した4つのルート**:
+  - `path('create/', views.create_timer, name='create_timer')`
+  - `path('<int:timer_id>/', views.update_timer, name='update_timer')`
+  - `path('<int:timer_id>/delete/', views.delete_timer, name='delete_timer')`
+  - `path('reorder/', views.reorder_timers, name='reorder_timers')`
+- **なぜ必要？**: CRUD APIエンドポイントを公開
+
+##### 3. `backend/apps/timers/tasks.py`
+- **追加した機能**: タイマー自動進行機能（complete_current_timer関数）
+- **主な内容**:
+  - `complete_current_timer(timer_state)` - タイマー完了時に次のタイマーへ自動進行
+    - 現在のタイマーに実経過時間と完了日時を記録
+    - 次の未完了タイマーを取得（`completed_at__isnull=True`, order順）
+    - 次のタイマーがあれば自動開始
+    - すべて完了したらタイマー状態をリセット
+    - **WebSocketブロードキャスト**: `broadcast_timer_state()` と `broadcast_timer_list()` 呼び出し
+- **変更内容**:
+  - `update_timer_state()` 内のタイマー完了チェック（`remaining <= 0`）で `complete_current_timer()` を呼び出し
+  - Step 2でコメントアウトしていたTODOを削除 → 実装完了
+- **技術的なポイント**:
+  - Celery Beatが1秒ごとに実行 → 残り時間0秒検知 → 自動完了 → 次のタイマー開始
+  - skip処理と同様のロジック（完了マーク → 次取得 → 自動開始）
+- **なぜ必要？**: タイマーが終わったら手動でスキップせず、自動的に次のタイマーに進むため
+
+---
+
+#### Phase C: フロントエンド Device Detection Hook実装（完了） ✅
+
+**新規作成したファイル**:
+
+##### 1. `frontend/src/hooks/useDeviceDetect.js`
+- **何をするファイル？**: デバイス判定フック（PC/モバイル）
+- **主な内容**:
+  - `window.matchMedia('(max-width: 768px)')` でモバイル判定
+  - メディアクエリ変更時にリアクティブに更新
+  - Returns: `{ isMobile: boolean }`
+- **技術的なポイント**:
+  - 768px閾値（TailwindCSS の `md` ブレークポイント）
+  - `addEventListener('change')` でウィンドウリサイズ対応
+  - クリーンアップで `removeEventListener`
+- **なぜ必要？**: PC専用UI（ドラッグ&ドロップ、編集・削除ボタン）とモバイル表示を切り替えるため
+
+---
+
+#### Phase D: フロントエンド Modal Component実装（完了） ✅
+
+**新規作成したファイル**:
+
+##### 1. `frontend/src/components/common/Modal.jsx`
+- **何をするファイル？**: 汎用モーダルコンポーネント
+- **主な内容**:
+  - Props: `isOpen`, `onClose`, `title`, `children`
+  - ESCキーで閉じる（`useEffect` + `keydown` イベント）
+  - バックドロップクリックで閉じる
+  - スクロール防止（`overflow-hidden` をbodyに追加）
+  - 最大高さ90vh、スクロール可能
+- **技術的なポイント**:
+  - `isOpen` がfalseの時は何もレンダリングしない
+  - バックドロップと内容エリアを分離（バックドロップクリックで閉じる）
+  - `overflow-y-auto` で長いフォームもスクロール可能
+- **なぜ必要？**: タイマー追加・編集フォームを表示するため
+
+---
+
+#### Phase E: フロントエンド Admin Components実装（完了） ✅
+
+**新規作成したファイル**:
+
+##### 1. `frontend/src/components/admin/MemberSelect.jsx`
+- **何をするファイル？**: メンバー選択ドロップダウンコンポーネント
+- **主な内容**:
+  - Props: `value`, `onChange`, `label`, `excludeIds`
+  - マウント時に `fetchMembers()` でメンバー一覧取得
+  - `excludeIds` で既に選択されたメンバーを除外（重複防止）
+  - 選択なし時は「選択してください」プレースホルダー
+- **技術的なポイント**:
+  - `members.filter((member) => !excludeIds.includes(member.id) || member.id === value)` で重複防止
+  - `value === member.id` の条件で現在の選択を維持
+- **なぜ必要？**: タイマー作成・編集時に3名のメンバーを選択し、重複を防止するため
+
+##### 2. `frontend/src/components/admin/TimerFormModal.jsx`
+- **何をするファイル？**: タイマー追加・編集モーダルフォーム
+- **主な内容**:
+  - Props: `isOpen`, `onClose`, `timer`（null = 新規作成、obj = 編集モード）
+  - フォーム状態: `band_name`, `minutes`, `member1_id`, `member2_id`, `member3_id`
+  - バリデーション:
+    - `band_name`: 必須
+    - `minutes`: > 0
+    - `member1_id`, `member2_id`, `member3_id`: 3名全員必須
+    - 重複チェック: `Set` を使って重複検出
+  - Submit処理:
+    - 新規作成: `createTimer(formData)` → alert → onClose
+    - 編集: `updateTimer(timer.id, formData)` → alert → onClose
+- **技術的なポイント**:
+  - `isEditMode = timer !== null` でモード判定
+  - `useEffect` で編集モード時にフォームデータを初期化
+  - `MemberSelect` の `excludeIds` で重複防止
+  - `Button` コンポーネントに `type` プロパティを追加（submit/button）
+- **なぜ必要？**: タイマーを作成・編集するUIを提供
+
+---
+
+#### Phase F: フロントエンド API Service拡張（完了） ✅
+
+**編集したファイル**:
+
+##### 1. `frontend/src/services/api.js`
+- **追加した5つのAPI関数**:
+  - `getMembers()` - GET /api/members/
+  - `createTimer(timerData)` - POST /api/timers/create/
+  - `updateTimer(timerId, timerData)` - PUT /api/timers/{id}/
+  - `deleteTimer(timerId)` - DELETE /api/timers/{id}/delete/
+  - `reorderTimers(timerIds)` - POST /api/timers/reorder/
+- **なぜ必要？**: バックエンドCRUD APIとの通信を一元管理
+
+---
+
+#### Phase G: フロントエンド Store拡張（完了） ✅
+
+**編集したファイル**:
+
+##### 1. `frontend/src/stores/timerStore.js`
+- **追加したimport**:
+  - `import { getMembers } from '../services/api';`
+- **追加したstate**:
+  - `isTimerFormOpen: false` - モーダル表示フラグ
+  - `editingTimer: null` - 編集対象タイマー（null = 新規作成）
+  - `members: []` - メンバーリスト（キャッシュ）
+- **追加したactions**:
+  - `openTimerForm(timer = null)` - モーダルを開く（timer指定で編集モード）
+  - `closeTimerForm()` - モーダルを閉じる（state初期化）
+  - `setMembers(members)` - メンバーリストをセット
+  - `fetchMembers()` - async - メンバー一覧をAPIから取得してキャッシュ
+- **なぜ必要？**: モーダルの表示状態とメンバー情報を管理
+
+---
+
+#### Phase H: ドラッグ&ドロップ統合（完了） ✅
+
+**依存関係追加**:
+
+##### 1. `frontend/package.json`
+- **追加したパッケージ**:
+  - `"@dnd-kit/core": "^6.1.0"`
+  - `"@dnd-kit/sortable": "^8.0.0"`
+  - `"@dnd-kit/utilities": "^3.2.2"`
+- **インストール**: `npm install` をDockerコンテナ内で実行
+- **なぜ必要？**: ドラッグ&ドロップ機能を実装するため
+
+---
+
+**新規作成したファイル**:
+
+##### 2. `frontend/src/components/timer/SortableTimerItem.jsx`
+- **何をするファイル？**: ドラッグ可能なタイマーアイテムコンポーネント
+- **主な内容**:
+  - Props: `timer`, `isCurrent`, `isMobile`
+  - `useSortable` フック使用（`@dnd-kit/sortable`）
+  - ドラッグ無効化: 完了済みタイマー（`timer.is_completed`）、モバイル（`isMobile`）
+  - ホバー状態管理（`useState`）
+  - 編集可否判定: `isEditable = !timer.is_completed && !(isCurrent && isRunning)`
+  - **UI要素**:
+    - **ドラッグハンドル**: 6ドットアイコン（PC専用、未完了のみ）
+    - **ステータスアイコン**: ✅（完了）/ ▶️（実行中）/ ⚪（待機中）
+    - **バンド名**: 完了時は打ち消し線
+    - **時間差**: 完了時のみ表示（+MM:SS 押し / -MM:SS 巻き / 定刻通り）
+    - **編集・削除ボタン**: ホバー時のみ表示（PC専用、編集可能な場合のみ）
+    - **ロックアイコン**: 実行中・完了済みタイマー
+  - **ハンドラ**:
+    - `handleEdit()` - `openTimerForm(timer)` 呼び出し
+    - `handleDelete()` - 確認ダイアログ → `deleteTimer(timer.id)` 呼び出し
+- **技術的なポイント**:
+  - `CSS.Transform.toString(transform)` でドラッグアニメーション
+  - `isDragging ? 0.5 : 1` で透明度変更
+  - 現在のタイマーは青背景でハイライト
+- **なぜ必要？**: ドラッグ&ドロップでタイマーを並び替え、ホバー時に編集・削除ボタンを表示
+
+---
+
+**編集したファイル（置き換え）**:
+
+##### 3. `frontend/src/components/timer/TimerList.jsx`
+- **削除した内容**:
+  - ❌ `TimerListItem` コンポーネント
+  - ❌ シンプルな `map()` によるリスト表示
+- **追加した内容**:
+  - ✅ `SortableTimerItem` コンポーネント
+  - ✅ `DndContext` でラップ（`@dnd-kit/core`）
+  - ✅ `SortableContext` で並び替え可能リスト（`verticalListSortingStrategy`）
+  - ✅ `useSensors` + `PointerSensor` で8pxドラッグで開始（誤操作防止）
+  - ✅ `handleDragEnd` - ドラッグ終了時の処理:
+    - `arrayMove()` で楽観的UI更新（即座にローカルで並び替え）
+    - `reorderTimers(newTimerIds)` API呼び出し
+    - エラー時はWebSocketで元の順序が配信される（自動ロールバック）
+  - ✅ 「+ 追加」ボタン（PC専用、ヘッダー右上）
+  - ✅ `useDeviceDetect` フック使用
+- **技術的なポイント**:
+  - **楽観的UI更新**: APIレスポンス前に即座にローカルで並び替え → UX向上
+  - **自動ロールバック**: API失敗時はWebSocketで正しい順序が配信される
+  - **センサー設定**: `distance: 8` で8pxドラッグしないと開始しない
+- **なぜ必要？**: ドラッグ&ドロップでタイマーの順序を変更できるようにするため
+
+---
+
+#### Phase I: App統合（完了） ✅
+
+**編集したファイル**:
+
+##### 1. `frontend/src/App.jsx`
+- **追加したimport**:
+  - `import { getTimerState, getTimers } from './services/api';` - 初期データ取得用
+  - `import TimerFormModal from './components/admin/TimerFormModal';`
+- **追加したstate**:
+  - `isTimerFormOpen`, `editingTimer`, `closeTimerForm`, `fetchMembers`, `isRunning`, `isPaused`
+- **追加した機能**:
+  - **初期データ取得**: `useEffect` で `getTimerState()` と `getTimers()` を並行取得
+    - `current_timer` がnullで未完了タイマーがある場合、最初のタイマーを自動セット
+    - `fetchMembers()` でメンバー情報も取得（モーダル用）
+  - **カウントダウンバグ修正**: `useEffect` 内で `if (!isRunning || isPaused) return;` を追加
+    - 修正前: 常にカウントダウン（待機中・一時停止中も動く）
+    - 修正後: 実行中かつ非一時停止の時のみカウントダウン
+  - **TimerFormModal統合**: JSX最後に追加
+  - **開発情報バナー更新**: "MVP Step 3: CRUD機能（作成・編集・削除・並び替え）"
+- **技術的なポイント**:
+  - **自動タイマー設定**: 初回ロード時に未完了タイマーがあれば最初を自動セット → 開始ボタンが押せる状態に
+  - **カウントダウン修正**: `isRunning && !isPaused` の時のみ `setInterval` を実行
+- **なぜ必要？**: モーダルを統合し、初期データ取得とカウントダウンバグを修正するため
+
+---
+
+**編集したファイル（マイナー修正）**:
+
+##### 2. `frontend/src/components/common/Button.jsx`
+- **追加したprop**:
+  - `type = 'button'` - `<button>` の `type` 属性
+- **なぜ必要？**: `TimerFormModal` で `type="submit"` を指定するため
+
+---
+
+### 実装ファイル一覧（MVP Step 3）
+
+**新規作成したファイル（10個）**:
+
+**バックエンド（3個）**:
+1. `backend/apps/members/views.py` - メンバー一覧API
+2. `backend/apps/members/serializers.py` - MemberSerializer
+3. `backend/apps/members/urls.py` - メンバーAPIルーティング
+
+**フロントエンド（7個）**:
+4. `frontend/src/hooks/useDeviceDetect.js` - デバイス判定フック
+5. `frontend/src/components/common/Modal.jsx` - モーダルコンポーネント
+6. `frontend/src/components/admin/MemberSelect.jsx` - メンバー選択ドロップダウン
+7. `frontend/src/components/admin/TimerFormModal.jsx` - タイマーフォームモーダル
+8. `frontend/src/components/timer/SortableTimerItem.jsx` - ドラッグ可能タイマーアイテム
+9. `frontend/package-lock.json` - npm依存関係ロック
+
+**編集したファイル（9個）**:
+
+**バックエンド（4個）**:
+1. `backend/backend/urls.py` - メンバーAPIルート追加
+2. `backend/apps/timers/views.py` - 4つのCRUD API追加（create/update/delete/reorder）
+3. `backend/apps/timers/urls.py` - 4つのルート追加
+4. `backend/apps/timers/tasks.py` - タイマー自動進行機能追加
+
+**フロントエンド（5個）**:
+5. `frontend/package.json` - @dnd-kit依存関係追加
+6. `frontend/src/services/api.js` - 5つのCRUD API関数追加
+7. `frontend/src/stores/timerStore.js` - モーダル状態・メンバー管理追加
+8. `frontend/src/components/timer/TimerList.jsx` - ドラッグ&ドロップ統合（完全置き換え）
+9. `frontend/src/components/common/Button.jsx` - type prop追加
+10. `frontend/src/App.jsx` - 初期データ取得・モーダル統合・カウントダウン修正
+
+**変更行数**: 約3400行追加、約34行削除 = 約3366行の純増
+
+---
+
+### 実装した機能まとめ
+
+✅ **バックエンド**:
+- Member API（GET /api/members/）
+- Timer CRUD APIs:
+  - POST /api/timers/create/ - タイマー作成
+  - PUT /api/timers/{id}/ - タイマー更新
+  - DELETE /api/timers/{id}/delete/ - タイマー削除（順序自動調整）
+  - POST /api/timers/reorder/ - ドラッグ&ドロップ並び替え
+- タイマー自動進行機能（0:00で次のタイマーに自動遷移）
+- 編集・削除制限（実行中・完了済みタイマーは編集不可）
+- 全CRUD操作でWebSocketブロードキャスト
+
+✅ **フロントエンド**:
+- デバイス判定フック（PC/モバイル、768px閾値）
+- モーダルコンポーネント（ESCキー対応、スクロール防止）
+- Admin Components:
+  - MemberSelect（重複防止）
+  - TimerFormModal（作成・編集、バリデーション）
+- ドラッグ&ドロップ機能（@dnd-kit使用）:
+  - SortableTimerItem（ホバー時編集・削除ボタン）
+  - 楽観的UI更新
+  - 6ドットドラッグハンドル
+  - 完了済み・モバイルではドラッグ無効
+- 初期データ自動取得（タイマー状態・リスト・メンバー）
+- 未完了タイマー自動セット（開始ボタン有効化）
+- カウントダウンバグ修正（実行中のみ動作）
+
+✅ **成果**:
+- PC専用のリッチなUI（ドラッグ&ドロップ、ホバー時ボタン）
+- モバイルでは不要なUIを非表示
+- 実行中・完了済みタイマーの保護（編集・削除不可）
+- タイマー完了時の自動進行
+- WebSocketリアルタイム同期（全クライアント即座に反映）
+
+---
+
+### 動作確認結果（2026-01-07）
+
+**確認項目**:
+- ✅ タイマー作成（「+ 追加」ボタン → モーダル → 作成）
+- ✅ タイマー編集（ホバー → 編集アイコン → モーダル → 更新）
+- ✅ タイマー削除（ホバー → 削除アイコン → 確認ダイアログ → 削除）
+- ✅ ドラッグ&ドロップ並び替え（6ドットアイコンドラッグ）
+- ✅ 実行中タイマーの編集・削除制限（ロックアイコン表示）
+- ✅ 完了済みタイマーの編集・削除制限（ロックアイコン表示）
+- ✅ タイマー完了時の自動進行（0:00 → 次のタイマー自動開始）
+- ✅ WebSocketリアルタイム同期（複数タブで即座に反映）
+- ✅ 初期データ自動取得（リロード時も即座に表示）
+- ✅ カウントダウン修正（待機中・一時停止中は動かない）
+- ✅ モバイル表示（ドラッグ・編集・削除ボタン非表示）
+
+**ユーザー確認**: 正常動作
+
+---
+
+**Gitコミット**:
+```
+commit 40d9f95
+feat: MVP Step 3完了（CRUD機能とタイマー自動進行）
+```
 
 ---
 
@@ -1013,8 +1449,19 @@ MVP Step 4では、HTTPポーリングをWebSocketプッシュ型に完全置き
   - ✅ キーボードショートカット
   - ✅ レスポンシブレイアウト
   - ✅ 動作確認
-- **MVP Step 3**: ⏭️ **スキップ（CRUD機能は後回し）**
-- **MVP Step 4**: 100% ✅ **完了！**
+- **MVP Step 3**: 100% ✅ **完了！**（Step 4の後に実装）
+  - ✅ バックエンドMember API実装
+  - ✅ バックエンドTimer CRUD APIs実装（create/update/delete/reorder）
+  - ✅ タイマー自動進行機能（complete_current_timer）
+  - ✅ フロントエンドDevice Detection Hook
+  - ✅ フロントエンドModal Component
+  - ✅ フロントエンドAdmin Components（MemberSelect/TimerFormModal）
+  - ✅ フロントエンドAPI Service拡張
+  - ✅ フロントエンドStore拡張
+  - ✅ ドラッグ&ドロップ統合（@dnd-kit）
+  - ✅ App統合（初期データ取得・カウントダウン修正）
+  - ✅ 動作確認
+- **MVP Step 4**: 100% ✅ **完了！**（Step 3の前に実装）
   - ✅ バックエンドWebSocket実装（Consumer/Routing/Utils）
   - ✅ ブロードキャスト関数実装（5箇所）
   - ✅ Daphne ASGIサーバー導入
@@ -1026,23 +1473,32 @@ MVP Step 4では、HTTPポーリングをWebSocketプッシュ型に完全置き
 
 ## 🎯 次のアクション
 
-**選択肢**:
+**完了したステップ**:
+- ✅ MVP Step 1: 最小構成（タイマー表示+開始ボタン）
+- ✅ MVP Step 2: タイマー一覧と押し巻き表示
+- ✅ MVP Step 3: CRUD機能（タイマーの追加/編集/削除/並び替え）
+- ✅ MVP Step 4: WebSocketリアルタイム同期
 
-1. **MVP Step 3: CRUD機能（タイマーの追加/編集/削除）**
-   - タイマー作成フォーム
-   - タイマー編集機能
-   - タイマー削除機能
-   - メンバー管理機能
+**次の候補**:
 
-2. **MVP Step 4: WebSocketリアルタイム同期**
-   - ポーリングをWebSocketに置き換え
-   - 全デバイスで同じ状態を即座に反映
-   - パフォーマンス改善
-
-3. **MVP Step 5: LINE連携と通知**
-   - LINE Webhook設定
+1. **MVP Step 5: LINE連携と通知**
+   - LINE Bot設定
+   - LINE Webhook実装
    - 5分前通知機能
    - リハーサル開始/終了通知
+   - メンバーへのメンション機能
+
+2. **追加機能**
+   - タイマーリセット機能（全タイマーを未完了に戻す）
+   - 履歴機能（過去のリハーサル記録）
+   - 統計機能（平均押し巻き、バンド別傾向など）
+   - エクスポート機能（CSV/PDF出力）
+
+3. **改善**
+   - モバイルでのCRUD機能（専用UI）
+   - ダークモード対応
+   - PWA化（オフライン対応）
+   - パフォーマンス最適化
 
 ---
 
@@ -1064,4 +1520,4 @@ MVP Step 4では、HTTPポーリングをWebSocketプッシュ型に完全置き
 
 ---
 
-**最終更新**: 2026-01-07（MVP Step 4完了 - WebSocketリアルタイム同期）
+**最終更新**: 2026-01-07（MVP Step 3完了 - CRUD機能とタイマー自動進行）
