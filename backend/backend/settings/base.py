@@ -175,6 +175,18 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'apps.timers.tasks.update_timer_state',
         'schedule': 1.0,  # 1秒ごと
     },
+    'check-and-send-notifications': {
+        'task': 'apps.line_integration.tasks.check_and_send_notifications',
+        'schedule': 1.0,  # 1秒ごと
+    },
+    'send-rehearsal-start-notification': {
+        'task': 'apps.line_integration.tasks.send_rehearsal_start_notification',
+        'schedule': 1.0,  # 1秒ごと
+    },
+    'send-rehearsal-end-notification': {
+        'task': 'apps.line_integration.tasks.send_rehearsal_end_notification',
+        'schedule': 1.0,  # 1秒ごと
+    },
 }
 
 

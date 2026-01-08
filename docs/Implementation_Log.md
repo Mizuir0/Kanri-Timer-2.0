@@ -1889,3 +1889,622 @@ MVP Step 4完了後、ユーザーフィードバックに基づいて以下のU
 ---
 
 **最終更新**: 2026-01-08（UI/UX改善とバグ修正完了）
+
+---
+
+## MVP Step 5: LINE連携と通知機能（2026-01-08）
+
+### 概要
+
+LINE Messaging APIを使った会員連携と自動通知機能を実装しました。
+
+**実装した機能**:
+- ✅ 名前ベース会員連携（ユーザーが名前を送信→自動マッチング）
+- ✅ 5分前通知（次のタイマーの5分前に担当者へ通知）
+- ✅ リハーサル開始通知（最初のタイマー開始時）
+- ✅ リハーサル終了通知（全タイマー完了時）
+- ✅ 重複送信防止機能
+- ✅ 通知履歴管理
+
+**技術スタック**:
+- LINE Messaging API (line-bot-sdk==3.5.0)
+- Celery Beat (1秒間隔のタスク実行)
+- Django ORM (unique_together制約による重複防止)
+- トランザクション処理 (transaction.atomic)
+
+---
+
+### 実装手順（6つのフェーズ）
+
+#### Phase 1: データベースとモデル（20分）
+
+**作成したファイル**:
+1. `backend/apps/line_integration/models.py`
+2. `backend/apps/line_integration/admin.py`
+
+**LineNotificationモデル**:
+```python
+class LineNotification(models.Model):
+    timer = models.ForeignKey(Timer, on_delete=models.CASCADE, null=True, blank=True)
+    notification_type = models.CharField(max_length=20, choices=[
+        ('5min_before', '5分前通知'),
+        ('rehearsal_start', 'リハーサル開始通知'),
+        ('rehearsal_end', 'リハーサル終了通知'),
+    ])
+    sent_at = models.DateTimeField(auto_now_add=True)
+    line_user_ids = models.JSONField(default=list)
+    message = models.TextField(blank=True)
+    
+    class Meta:
+        unique_together = [['timer', 'notification_type']]  # 重複防止
+```
+
+**重要な設計ポイント**:
+- `timer=null`: リハーサル開始・終了通知（タイマーに紐づかない）
+- `on_delete=CASCADE`: タイマー削除時に5分前通知も自動削除
+- `unique_together`: 同じタイマー×同じ通知種別は1回のみ保存可能
+- `line_user_ids`: JSONFieldで複数の送信先を記録
+
+**マイグレーション**:
+```bash
+docker-compose exec web python manage.py makemigrations line_integration
+docker-compose exec web python manage.py migrate
+```
+
+**検証**: Django Adminで通知履歴モデルが表示されることを確認
+
+---
+
+#### Phase 2: LINE APIクライアント（30分）
+
+**作成したファイル**:
+- `backend/apps/line_integration/line_client.py`
+
+**実装した関数**:
+1. `get_messaging_api()` - LINE Messaging API クライアント取得
+2. `get_webhook_handler()` - LINE Webhook ハンドラー取得
+3. `send_line_message(line_user_id, message_text)` - 1対1メッセージ送信
+4. `send_line_message_bulk(line_user_ids, message_text)` - 一括送信
+
+**環境変数チェック**:
+```python
+if not settings.LINE_CHANNEL_ACCESS_TOKEN:
+    raise ValueError('LINE_CHANNEL_ACCESS_TOKEN が設定されていません。')
+```
+
+**エラーハンドリング**:
+- LINE API送信失敗時もログに記録して継続
+- 成功数・失敗数をタプルで返す
+- 送信先が0件の場合は警告ログ
+
+---
+
+#### Phase 3: LINE Webhookハンドラー（40分）
+
+**作成したファイル**:
+1. `backend/apps/line_integration/views.py`
+2. `backend/apps/line_integration/urls.py`
+
+**編集したファイル**:
+- `backend/backend/urls.py` - LINE URLを有効化
+
+**名前ベース連携フロー**:
+1. ユーザーがLINE Botに名前を送信（例: "山田太郎"）
+2. `Member.objects.get(name=received_text, is_active=True)` で検索
+3. 一致したら `member.line_user_id = line_user_id` を更新
+4. 結果メッセージを返信
+
+**セキュリティ**:
+- Webhook署名検証（`InvalidSignatureError`で不正リクエスト拒否）
+- CSRF無効化（`@csrf_exempt`）
+- POST メソッドのみ受付（`@require_POST`）
+
+**連携ロジック**:
+```python
+# ケース1: 別のLINEアカウントと連携済み → エラー
+if member.line_user_id and member.line_user_id != line_user_id:
+    return エラーメッセージ
+
+# ケース2: 同じLINEアカウントで再度送信 → 既に連携済みメッセージ
+if member.line_user_id == line_user_id:
+    return 連携確認メッセージ
+
+# ケース3: このLINEアカウントが他のメンバーと連携済み → 上書き
+previous_member = Member.objects.filter(line_user_id=line_user_id).first()
+if previous_member:
+    previous_member.line_user_id = None  # 古い連携を解除
+    previous_member.save()
+
+# 新しい連携を保存
+member.line_user_id = line_user_id
+member.save()
+```
+
+**ルール**:
+- 1つのLINEアカウント = 1人のメンバーのみ連携可能
+- 1人のメンバー = 1つのLINEアカウントのみ連携可能
+- 連携を変更すると、古い連携は自動的に解除される
+
+**エンドポイント**:
+- `POST /api/line/webhook/` - LINE Webhook受信
+- `GET /api/line/test/` - デバッグ用設定確認
+
+---
+
+#### Phase 4: 5分前通知タスク（50分）
+
+**作成したファイル**:
+- `backend/apps/line_integration/tasks.py`
+
+**編集したファイル**:
+- `backend/backend/settings/base.py` - Celery Beat スケジュール追加
+
+**実装したタスク**:
+```python
+@shared_task
+def check_and_send_notifications():
+    """5分前通知チェック - Celery Beatで1秒ごとに実行"""
+```
+
+**ロジック**:
+1. タイマー実行中かつ未一時停止を確認
+2. 次のタイマーを取得（`order__gt=current_timer.order`, `completed_at__isnull=True`）
+3. 残り時間を計算（現在のタイマーのremaining）
+4. 297〜303秒（5分±3秒）の範囲でトリガー
+5. 重複送信チェック（`LineNotification.objects.filter(...).exists()`）
+6. 担当者のLINE User ID取得（member1, member2, member3）
+7. トランザクション内で送信+履歴記録
+
+**タイミング精度の工夫**:
+```python
+TARGET_SECONDS = 300  # 5分
+TOLERANCE = 3  # ±3秒の許容範囲
+
+if not (TARGET_SECONDS - TOLERANCE <= time_until_next <= TARGET_SECONDS + TOLERANCE):
+    return  # まだ5分前でない、または既に過ぎている
+```
+
+**理由**: 1秒ごとにチェックするため、ピッタリ300秒を捉えられない可能性がある
+
+**メッセージ例**:
+```
+【KanriTimer】
+次は「Band A」の担当です。
+あと5分で開始します🎵
+
+担当: 山田太郎、田中花子、佐藤次郎
+```
+
+**Celery Beat設定**:
+```python
+CELERY_BEAT_SCHEDULE = {
+    'check-and-send-notifications': {
+        'task': 'apps.line_integration.tasks.check_and_send_notifications',
+        'schedule': 1.0,  # 1秒ごと
+    },
+}
+```
+
+---
+
+#### Phase 5: リハーサル開始・終了通知（40分）
+
+**編集したファイル**:
+- `backend/apps/line_integration/tasks.py` - 2つの関数追加
+- `backend/backend/settings/base.py` - Celery Beat スケジュールに2タスク追加
+
+**実装した関数**:
+
+**1. リハーサル開始通知**:
+```python
+@shared_task
+def send_rehearsal_start_notification():
+    """リハーサル開始通知"""
+    # トリガー: TimerState.is_running=True, started_at設定済み
+    # 重複チェック: timer__isnull=True, notification_type='rehearsal_start'
+    # 送信先: 全LINE連携済みメンバー
+```
+
+**メッセージ**:
+```
+【KanriTimer】
+🎤 リハーサルを開始しました！
+
+全員頑張りましょう🔥
+```
+
+**2. リハーサル終了通知**:
+```python
+@shared_task
+def send_rehearsal_end_notification():
+    """リハーサル終了通知"""
+    # トリガー: 全タイマーcompleted_at設定済み
+    # 重複チェック: timer__isnull=True, notification_type='rehearsal_end'
+    # 送信先: 全LINE連携済みメンバー
+```
+
+**メッセージ**:
+```
+【KanriTimer】
+🎉 リハーサルが終了しました！
+
+お疲れ様でした👏
+全体の進行状況: +2:30 押し🔴
+```
+
+**累計押し巻き計算**:
+```python
+# 完了済みタイマーの時間差を合計
+completed_timers = Timer.objects.filter(actual_seconds__isnull=False)
+total_diff = sum(timer.time_difference for timer in completed_timers)
+
+# 累積一時停止時間を加算
+total_diff += timer_state.total_paused_seconds
+```
+
+**Celery Beat設定追加**:
+```python
+'send-rehearsal-start-notification': {
+    'task': 'apps.line_integration.tasks.send_rehearsal_start_notification',
+    'schedule': 1.0,
+},
+'send-rehearsal-end-notification': {
+    'task': 'apps.line_integration.tasks.send_rehearsal_end_notification',
+    'schedule': 1.0,
+},
+```
+
+---
+
+#### Phase 6: 総合テストと環境設定（60分）
+
+**環境変数設定**:
+```bash
+# .env に追加
+LINE_CHANNEL_ACCESS_TOKEN=your_channel_access_token_here
+LINE_CHANNEL_SECRET=your_channel_secret_here
+ALLOWED_HOSTS=localhost,127.0.0.1,0.0.0.0,*.ngrok-free.app,*.ngrok.io
+```
+
+**LINE Bot設定（LINE Developers Console）**:
+1. Messaging API チャネル作成
+2. Channel access token 取得
+3. Channel secret 取得
+4. Webhook URL設定: `https://<ngrok-url>/api/line/webhook/`
+5. Webhookを有効化
+
+**ngrok起動**:
+```bash
+ngrok http 8000
+# → https://<random>.ngrok-free.app を取得
+```
+
+**Dockerコンテナ再起動**:
+```bash
+docker-compose down
+docker-compose up -d
+```
+
+**動作確認**:
+- ✅ テストエンドポイント（`/api/line/test/`）で環境変数確認
+- ✅ LINE Webhook検証成功（緑チェック）
+- ✅ 名前送信で連携成功
+- ✅ Django Adminで`line_user_id`更新確認
+- ✅ Celery Beat で3つのLINE通知タスクが実行中
+
+---
+
+### バグ修正と改善
+
+#### 修正1: タイマー0件時の終了通知を防止 ✅
+
+**問題**: タイマーを全削除すると、「全て完了」と判定されて終了通知が送られる
+
+**修正内容**:
+```python
+# 修正前
+incomplete_timers = Timer.objects.filter(completed_at__isnull=True).count()
+if incomplete_timers > 0:
+    return
+# ここに到達 = タイマー0件でも「全て完了」と判定 ❌
+
+# 修正後
+total_timers = Timer.objects.count()
+if total_timers == 0:
+    return  # タイマーが存在しない場合はスキップ
+
+incomplete_timers = Timer.objects.filter(completed_at__isnull=True).count()
+if incomplete_timers > 0:
+    return
+# ここに到達 = タイマーが1件以上存在し、全て完了している ✅
+```
+
+**編集したファイル**: `backend/apps/line_integration/tasks.py`
+
+---
+
+#### 修正2: 全削除時に通知履歴も削除 ✅
+
+**問題**: タイマーを全削除しても、リハーサル開始・終了通知の履歴（`timer=null`）が残る
+→ 2回目のテストで「既に送信済み」と判定されて通知が来ない
+
+**修正内容**:
+```python
+# backend/apps/timers/views.py の delete_all_timers() に追加
+with transaction.atomic():
+    # LINE通知履歴を削除（🆕追加）
+    from apps.line_integration.models import LineNotification
+    notification_count = LineNotification.objects.all().delete()[0]
+    
+    # 全タイマーを削除
+    deleted_count = Timer.objects.all().delete()[0]
+    
+    # TimerStateをリセット
+    timer_state.save()
+```
+
+**レスポンスメッセージ**:
+```
+3件のタイマーと2件の通知履歴を削除しました。
+```
+
+**編集したファイル**: `backend/apps/timers/views.py`
+
+---
+
+#### 修正3: 連携上書き機能の実装 ✅
+
+**問題**: 1つのLINEアカウントで複数のメンバーと連携できてしまう
+- 山田太郎: `line_user_id = "U123456"`
+- 田中花子: `line_user_id = "U123456"` （同じID）
+→ 通知が重複して届く可能性
+
+**修正内容**:
+```python
+# このLINEアカウントが他のメンバーと連携されているかチェック（🆕追加）
+previous_member = Member.objects.filter(line_user_id=line_user_id, is_active=True).first()
+
+# 新しいメンバーに連携
+member.line_user_id = line_user_id
+member.save()
+
+# 以前の連携を解除（🆕追加）
+if previous_member and previous_member.id != member.id:
+    previous_member.line_user_id = None
+    previous_member.save()
+    response_message = f'✅ 「{member.name}」さんとして連携しました！\n（以前の「{previous_member.name}」の連携は解除されました）'
+```
+
+**動作**:
+1. 山田太郎として連携
+2. 田中花子と送信 → 山田太郎の連携が解除され、田中花子として連携
+3. メッセージ: "田中花子として連携しました！（以前の山田太郎の連携は解除されました）"
+
+**ルール**:
+- 1つのLINEアカウント = 1人のメンバーのみ連携可能
+- 連携を変更すると、古い連携は自動的に解除される
+
+**編集したファイル**: `backend/apps/line_integration/views.py`
+
+---
+
+#### 修正4: Webhook エラーハンドリング強化 ✅
+
+**追加した機能**:
+1. 環境変数未設定チェック
+2. 詳細なエラーログ
+3. デバッグ用テストエンドポイント
+
+**デバッグエンドポイント**:
+```python
+@csrf_exempt
+def line_webhook_test(request):
+    """デバッグ用：設定確認エンドポイント"""
+    return JsonResponse({
+        'status': 'ok',
+        'channel_secret_configured': bool(settings.LINE_CHANNEL_SECRET),
+        'channel_token_configured': bool(settings.LINE_CHANNEL_ACCESS_TOKEN),
+        'allowed_hosts': settings.ALLOWED_HOSTS,
+    })
+```
+
+**使い方**:
+```bash
+curl https://your-ngrok-url/api/line/test/
+# → {"status": "ok", "channel_secret_configured": true, ...}
+```
+
+**エラーハンドリング**:
+```python
+try:
+    # Webhook処理
+except InvalidSignatureError as e:
+    logger.error(f'LINE Webhook: 署名検証エラー - {e}')
+    return HttpResponseBadRequest('Invalid signature')
+except Exception as e:
+    logger.error(f'LINE Webhook: 予期しないエラー - {e}', exc_info=True)
+    return JsonResponse({'error': str(e)}, status=500)
+```
+
+**編集したファイル**: `backend/apps/line_integration/views.py`, `urls.py`
+
+---
+
+### 重複防止の仕組み（3重の防御）
+
+#### レベル1: アプリケーションレベル（事前チェック）
+
+各Celeryタスク実行時に重複チェック:
+```python
+already_sent = LineNotification.objects.filter(
+    timer=next_timer,
+    notification_type='5min_before'
+).exists()
+
+if already_sent:
+    logger.debug(f'既に送信済み: {next_timer.band_name}')
+    return  # 送信せずに終了
+```
+
+**タイムライン例（5分前通知）**:
+- 297秒前: ✅ チェック → レコードなし → 送信 → レコード作成
+- 298秒前: ⛔ チェック → レコード存在 → スキップ
+- 299秒前: ⛔ チェック → レコード存在 → スキップ
+- 300秒前: ⛔ チェック → レコード存在 → スキップ
+- ...（以降ずっとスキップ）
+
+#### レベル2: データベースレベル（unique制約）
+
+万が一、同時実行などでレベル1をすり抜けても、データベースが重複挿入を拒否:
+```python
+class Meta:
+    unique_together = [['timer', 'notification_type']]
+```
+
+**結果**: 同じタイマー × 同じ通知種別は物理的に2回保存できない
+
+#### レベル3: トランザクション安全性
+
+送信とレコード作成をアトミックに実行:
+```python
+with transaction.atomic():
+    # 送信
+    send_line_message_bulk(line_user_ids, message_text)
+    
+    # 履歴記録
+    LineNotification.objects.create(...)
+```
+
+**メリット**: 送信に成功したら必ずレコードが作成される → 重複チェックが確実に機能
+
+---
+
+### 実装ファイル一覧
+
+**新規作成（6ファイル）**:
+1. `backend/apps/line_integration/models.py` - LineNotificationモデル
+2. `backend/apps/line_integration/admin.py` - Django Admin設定
+3. `backend/apps/line_integration/line_client.py` - LINE APIクライアント
+4. `backend/apps/line_integration/views.py` - Webhookハンドラー
+5. `backend/apps/line_integration/urls.py` - URLルーティング
+6. `backend/apps/line_integration/tasks.py` - Celeryタスク（3つの通知機能）
+
+**新規作成（マイグレーション）**:
+7. `backend/apps/line_integration/migrations/0001_initial.py`
+
+**編集（3ファイル）**:
+1. `backend/backend/urls.py` - LINE URLを有効化
+2. `backend/backend/settings/base.py` - Celery Beat スケジュールに3タスク追加
+3. `backend/apps/timers/views.py` - delete_all_timers()に通知履歴削除機能追加
+
+**環境設定**:
+1. `.env` - LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET, ALLOWED_HOSTS追加
+
+**変更行数**: 約450行追加
+
+---
+
+### 動作確認結果（2026-01-08）
+
+**確認項目**:
+
+**名前ベース連携**:
+- ✅ 新規連携成功（「山田太郎」→ 連携成功メッセージ）
+- ✅ 連携確認（同じ名前を再度送信 → 既に連携済みメッセージ）
+- ✅ 連携上書き（別の名前を送信 → 古い連携解除、新しい連携）
+- ✅ 連携拒否（別のLINEアカウントから送信 → エラーメッセージ）
+- ✅ Django Adminで`Member`の`line_user_id`更新確認
+
+**5分前通知**:
+- ✅ タイマー実行中、次のタイマーの5分前に通知が届く
+- ✅ 担当者3名全員に送信される
+- ✅ LINE連携していないメンバーにはスキップ
+- ✅ Django Adminで`LineNotification`レコード作成確認
+- ✅ 重複送信なし（2回目以降はスキップ）
+
+**リハーサル開始通知**:
+- ✅ 最初のタイマー開始時に全メンバーへ通知
+- ✅ Django Adminで`LineNotification`（timer=null）レコード作成確認
+- ✅ 重複送信なし
+
+**リハーサル終了通知**:
+- ✅ 全タイマー完了時に全メンバーへ通知
+- ✅ 全体の進行状況（押し巻き）が表示される
+- ✅ Django Adminで`LineNotification`（timer=null）レコード作成確認
+- ✅ タイマー0件の場合は通知されない（修正済み）
+
+**全削除機能**:
+- ✅ 全タイマーと通知履歴が同時に削除される
+- ✅ 削除後、新しいリハーサルで通知が正常に送信される
+
+**Celeryタスク**:
+- ✅ 3つのLINE通知タスクが1秒ごとに実行中
+- ✅ ログで動作状況を追跡可能
+
+**デバッグ機能**:
+- ✅ テストエンドポイントで環境変数確認可能
+- ✅ Webhook署名検証が正常動作
+
+**ユーザー確認**: 全て正常動作
+
+---
+
+### 技術的なポイント
+
+**LINE Messaging API**:
+- line-bot-sdk==3.5.0 使用
+- Webhook署名検証でセキュリティ確保
+- Push Message API で通知送信
+
+**Celery Beat スケジューリング**:
+- 1秒間隔で3つのタスクを実行
+- タイミング精度: ±3秒の許容範囲
+- 非同期処理でWebアプリケーションをブロックしない
+
+**データベース設計**:
+- unique_together制約で重複防止
+- JSONFieldで複数の送信先を記録
+- CASCADE削除でタイマー削除時の自動クリーンアップ
+
+**トランザクション処理**:
+- transaction.atomic()で送信と記録をアトミックに実行
+- エラー時のロールバックで整合性を保証
+
+**エラーハンドリング**:
+- 各層でのエラーキャッチとログ記録
+- LINE API送信失敗時も処理を継続
+- デバッグ用エンドポイントで問題の早期発見
+
+**ログ設計**:
+- `logger.info`: 成功した通知送信
+- `logger.warning`: LINE未連携メンバー、メンバー未検出
+- `logger.error`: APIエラー、システムエラー
+- `logger.debug`: 通常のスキップ（既に送信済み、まだ5分前でない）
+
+---
+
+### 今後の拡張可能性
+
+**通知のカスタマイズ**:
+- 通知タイミングの調整（5分前 → 3分前など）
+- 通知メッセージのテンプレート化
+- 個別通知設定（メンバーごとにON/OFF）
+
+**セッション管理**:
+- リハーサルごとにセッションIDを生成
+- 日付ベースの自動リセット
+- 複数リハーサルの並行管理
+
+**通知種別の追加**:
+- タイマー開始通知
+- タイマー完了通知
+- 遅延アラート（押しが一定時間を超えたら警告）
+
+**統計・レポート**:
+- 通知送信履歴の可視化
+- メンバーごとの連携状況レポート
+- 通知送信成功率のモニタリング
+
+---
+
+**最終更新**: 2026-01-08（MVP Step 5: LINE連携と通知機能完了）

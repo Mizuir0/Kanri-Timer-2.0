@@ -685,6 +685,10 @@ def delete_all_timers(request):
 
         # トランザクション内で全削除とTimerStateリセット
         with transaction.atomic():
+            # LINE通知履歴を削除
+            from apps.line_integration.models import LineNotification
+            notification_count = LineNotification.objects.all().delete()[0]
+
             # 全タイマーを削除
             deleted_count = Timer.objects.all().delete()[0]
 
@@ -699,15 +703,16 @@ def delete_all_timers(request):
             timer_state.is_paused = False
             timer_state.save()
 
-        logger.info(f'全タイマー削除: {deleted_count}件')
+        logger.info(f'全タイマー削除: {deleted_count}件, LINE通知履歴削除: {notification_count}件')
 
         # WebSocketで配信（状態とリストの両方）
         broadcast_timer_state()
         broadcast_timer_list()
 
         return Response({
-            'detail': f'{deleted_count}件のタイマーを削除しました。',
-            'deleted_count': deleted_count
+            'detail': f'{deleted_count}件のタイマーと{notification_count}件の通知履歴を削除しました。',
+            'deleted_count': deleted_count,
+            'notification_deleted_count': notification_count
         })
 
     except Exception as e:
