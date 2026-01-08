@@ -1,7 +1,7 @@
 import { useTimerStore } from '../../stores/timerStore';
 import SortableTimerItem from './SortableTimerItem';
 import useDeviceDetect from '../../hooks/useDeviceDetect';
-import { reorderTimers } from '../../services/api';
+import { reorderTimers, deleteAllTimers } from '../../services/api';
 import {
   DndContext,
   closestCenter,
@@ -57,6 +57,26 @@ const TimerList = () => {
     }
   };
 
+  // 全タイマー削除ハンドラ
+  const handleDeleteAll = async () => {
+    const confirmMessage = `全てのタイマー（${allTimers.length}件）を削除してもよろしいですか？\n\nこの操作は取り消せません。`;
+    if (!window.confirm(confirmMessage)) {
+      return;
+    }
+
+    try {
+      await deleteAllTimers();
+      console.log('全タイマー削除成功');
+    } catch (error) {
+      console.error('全タイマー削除失敗:', error);
+      const errorMessage = error.response?.data?.detail || '全タイマーの削除に失敗しました。';
+      alert(errorMessage);
+    }
+  };
+
+  // 全タイマーが完了しているかチェック
+  const allTimersCompleted = allTimers.length > 0 && allTimers.every((t) => t.completed_at);
+
   if (!allTimers || allTimers.length === 0) {
     return (
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
@@ -96,13 +116,26 @@ const TimerList = () => {
           </p>
         </div>
         {!isMobile && (
-          <button
-            onClick={() => openTimerForm(null)}
-            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors text-sm font-medium"
-            title="タイマーを追加"
-          >
-            + 追加
-          </button>
+          <div className="flex gap-2">
+            {/* 全タイマー削除ボタン（全完了時のみ表示） */}
+            {allTimersCompleted && (
+              <button
+                onClick={handleDeleteAll}
+                className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors text-sm font-medium"
+                title="全てのタイマーを削除"
+              >
+                全削除
+              </button>
+            )}
+            {/* タイマー追加ボタン */}
+            <button
+              onClick={() => openTimerForm(null)}
+              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors text-sm font-medium"
+              title="タイマーを追加"
+            >
+              + 追加
+            </button>
+          </div>
         )}
       </div>
 

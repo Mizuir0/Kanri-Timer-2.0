@@ -35,6 +35,8 @@ export const useTimerStore = create((set) => ({
     remainingSeconds: state.remaining_seconds || 0,
     isRunning: state.is_running,
     isPaused: state.is_paused,
+    totalTimeDifference: state.total_time_difference || 0,
+    totalTimeDifferenceDisplay: state.total_time_difference_display || '',
   }),
 
   // タイマーリストと押し巻き計算を一括更新（MVP Step 2）

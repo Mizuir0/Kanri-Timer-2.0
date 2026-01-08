@@ -67,7 +67,7 @@ const TimerListItem = ({ timer, isCurrent }) => {
 
         {/* 時間差（完了時のみ） */}
         {timer.completed_at && timer.time_difference !== null && (
-          <span className={`text-sm font-medium ${getTimeDifferenceColor()}`}>
+          <span className={`text-sm font-medium tabular-nums ${getTimeDifferenceColor()}`}>
             {formatTimeDifference()}
           </span>
         )}

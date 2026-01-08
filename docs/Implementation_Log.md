@@ -1520,4 +1520,372 @@ MVP Step 4では、HTTPポーリングをWebSocketプッシュ型に完全置き
 
 ---
 
-**最終更新**: 2026-01-07（MVP Step 3完了 - CRUD機能とタイマー自動進行）
+---
+
+## 📝 UI/UX改善とバグ修正
+
+### ✅ 完了した作業（2026-01-08）
+
+**実装日**: 2026-01-08
+
+MVP Step 4完了後、ユーザーフィードバックに基づいて以下のUI/UX改善とバグ修正を実施しました。
+
+---
+
+#### 修正1: 一時停止時の表示時間の正確性向上（完了） ✅
+
+**問題**: 一時停止ボタンを0:55で押すと0:56や0:54と表示されていた
+
+**原因**: 一時停止時に経過時間を `math.ceil()` で切り上げていたため、表示時間とズレが生じていた
+
+**修正内容**:
+
+**編集したファイル**: `backend/apps/timers/views.py` (pause_timer関数)
+
+- **修正前**:
+  ```python
+  elapsed = (timezone.now() - timer_state.started_at).total_seconds()
+  timer_state.elapsed_seconds = math.ceil(elapsed)
+  ```
+
+- **修正後**:
+  ```python
+  # 表示される残り時間を基準に経過時間を保存（表示の一貫性を保つ）
+  elapsed = (timezone.now() - timer_state.started_at).total_seconds()
+  total_seconds = timer_state.current_timer.minutes * 60
+  remaining = total_seconds - elapsed
+  display_remaining = max(0, math.ceil(remaining))
+  timer_state.elapsed_seconds = total_seconds - display_remaining
+  ```
+
+**技術的なポイント**:
+- 実行中に表示される残り時間（`ceil(remaining)`）を計算
+- その値を基準に `elapsed_seconds` を逆算して保存
+- これにより、一時停止前後で表示が完全に一致
+
+**成果**: 0:55で一時停止 → 0:55と表示（表示の一貫性確保）
+
+---
+
+#### 修正2: タイマー作成・更新時の成功メッセージ削除（完了） ✅
+
+**問題**: タイマー作成・更新時に不要なアラート（「タイマーを作成しました。」）が表示されていた
+
+**理由**: WebSocketでリアルタイム更新されるため、成功メッセージは冗長
+
+**修正内容**:
+
+**編集したファイル**: `frontend/src/components/admin/TimerFormModal.jsx`
+
+- **削除した行**:
+  ```javascript
+  alert('タイマーを作成しました。');
+  alert('タイマーを更新しました。');
+  ```
+
+**成果**: スムーズなUX（エラー時のみメッセージ表示）
+
+---
+
+#### 修正3: タイマー編集時に担当者が自動選択される機能追加（完了） ✅
+
+**問題**: タイマー編集時に担当者ドロップダウンが空白状態で表示されていた
+
+**原因**: バックエンドAPIがメンバーのIDを返していなかった
+
+**修正内容**:
+
+**編集したファイル**: `backend/apps/timers/serializers.py` (TimerSerializer)
+
+- **追加したフィールド**:
+  ```python
+  member1 = MemberSerializer(read_only=True)
+  member2 = MemberSerializer(read_only=True)
+  member3 = MemberSerializer(read_only=True)
+  ```
+
+- **Meta.fields に追加**:
+  ```python
+  fields = (
+      ...
+      'member1',  # 新規追加
+      'member2',  # 新規追加
+      'member3',  # 新規追加
+      ...
+  )
+  ```
+
+**技術的なポイント**:
+- 既存の `members` フィールド（名前のみの配列）は保持
+- 新たに `member1`, `member2`, `member3` フィールドで `{"id": 1, "name": "田中"}` 形式を返す
+- フロントエンドの `TimerFormModal` が既にこの形式に対応
+
+**成果**: 編集モーダルを開くと担当者が自動選択された状態で表示
+
+---
+
+#### 修正4: タイマー表示フォントをtabular-numsに変更（完了） ✅
+
+**問題**: 等幅フォント（`font-mono`）のゼロに斜線が入っていた
+
+**要望**: 斜線なしのゼロを表示したい
+
+**修正内容**:
+
+**編集したファイル（4個）**:
+1. `frontend/src/components/timer/CurrentTimer.jsx`
+2. `frontend/src/components/timer/SortableTimerItem.jsx`
+3. `frontend/src/components/timer/TimerListItem.jsx`
+4. `frontend/src/components/timer/TimeDifferenceDisplay.jsx`
+
+- **変更内容**: `font-mono` → `tabular-nums` に変更
+
+**技術的なポイント**:
+- `font-mono`: 全文字が等幅（プログラミング用フォント、ゼロに斜線あり）
+- `tabular-nums`: 数字のみ等幅、システムフォント使用（ゼロに斜線なし）
+
+**成果**: 数字の幅が揃い、かつ斜線なしのゼロが表示される
+
+---
+
+#### 修正5: 実行中タイマーのドラッグ無効化（完了） ✅
+
+**問題**: 実行中のタイマーをドラッグで並び替えできてしまう（フロントエンドのみ）
+
+**リスク**: 誤操作でタイマー順序を変更してしまう可能性
+
+**修正内容**:
+
+**編集したファイル**: `frontend/src/components/timer/SortableTimerItem.jsx`
+
+- **useSortable の disabled 条件に追加**:
+  ```javascript
+  disabled: timer.is_completed || isMobile || (isCurrent && isRunning)
+  ```
+
+- **ドラッグハンドル表示条件に追加**:
+  ```javascript
+  {!isMobile && !timer.is_completed && !(isCurrent && isRunning) && (
+    <div {...attributes} {...listeners} ...>
+  )}
+  ```
+
+**成果**: 実行中のタイマーはドラッグ不可、ドラッグハンドルも非表示
+
+---
+
+#### 修正6: 並び替え時に新しいorder=1のタイマーを自動表示（完了） ✅
+
+**問題**: 開始前に1番目のタイマーを並び替えても、タイマー欄の表示が更新されない
+
+**原因**: フロントエンドが初回のタイマーを保持し続けていた
+
+**修正内容**:
+
+**編集したファイル**: `frontend/src/App.jsx`
+
+- **WebSocketリスナー `handleTimerListUpdate` に追加**:
+  ```javascript
+  // タイマーが開始されていない場合、最初の未完了タイマーを自動セット
+  const { isRunning: currentIsRunning, currentTimer: currentCurrentTimer } = useTimerStore.getState();
+
+  if (!currentIsRunning && data.length > 0) {
+    const firstIncompleteTimer = data.find(t => !t.is_completed);
+    if (firstIncompleteTimer) {
+      if (!currentCurrentTimer || currentCurrentTimer.id !== firstIncompleteTimer.id) {
+        setCurrentTimer(firstIncompleteTimer);
+        setRemainingSeconds(firstIncompleteTimer.minutes * 60);
+      }
+    }
+  }
+  ```
+
+**技術的なポイント**:
+- `useTimerStore.getState()` で最新の状態を取得（useEffect依存配列の問題を回避）
+- タイマー未実行時のみ自動切り替え（実行中は切り替えない）
+- WebSocketで配信された新しい順序に基づいて最初のタイマーを表示
+
+**成果**: 並び替え後、即座にタイマー欄が新しい1番目のタイマーに切り替わる
+
+---
+
+#### 修正7: タイマーリスト更新の修正（WebSocketリスナー問題）（完了） ✅
+
+**問題**: タイマー作成時にリロードしないとタイマー一覧が更新されない
+
+**原因**: useEffect の依存配列に `currentTimer` が含まれ、WebSocketリスナーが頻繁に再登録されていた
+
+**修正内容**:
+
+**編集したファイル**: `frontend/src/App.jsx`
+
+- **依存配列から削除**: `currentTimer`, `isRunning` を削除
+- **最新状態の取得方法変更**: リスナー内で `useTimerStore.getState()` を使用
+
+**修正前の依存配列**:
+```javascript
+}, [updateTimerState, updateTimerList, currentTimer, isRunning, setCurrentTimer, setRemainingSeconds]);
+```
+
+**修正後の依存配列**:
+```javascript
+}, [updateTimerState, updateTimerList, setCurrentTimer, setRemainingSeconds]);
+```
+
+**技術的なポイント**:
+- リスナーが一度だけ登録され、不要な再登録が発生しない
+- 最新の状態は `getState()` で取得
+
+**成果**: タイマー作成時にWebSocketで即座にリスト更新
+
+---
+
+#### 修正8: 一時停止→再開時の進行状況表示の修正（完了） ✅
+
+**問題**: 一時停止→再開すると進行状況が1つ前の状態に戻る（例: -0:30巻き → -1:00巻き）
+
+**原因**: 再開後、累積一時停止時間が進行状況に反映されていなかった
+
+**修正内容**:
+
+**編集したファイル**: `backend/apps/timers/serializers.py` (get_total_time_difference)
+
+- **修正前**:
+  ```python
+  # 一時停止中の場合、現在の一時停止時間を暫定的に加算
+  if (obj.current_timer and obj.is_running and obj.is_paused and obj.paused_at):
+      current_pause_duration = int((timezone.now() - obj.paused_at).total_seconds())
+      provisional_pause = obj.total_paused_seconds + current_pause_duration
+      total_diff += provisional_pause
+  ```
+
+- **修正後**:
+  ```python
+  # 実行中のタイマーがある場合、累積一時停止時間を加算
+  if obj.current_timer and obj.is_running:
+      # 既に累積された一時停止時間を加算
+      total_diff += obj.total_paused_seconds
+
+      # さらに一時停止中の場合、現在の一時停止時間も暫定的に加算
+      if obj.is_paused and obj.paused_at:
+          current_pause_duration = int((timezone.now() - obj.paused_at).total_seconds())
+          total_diff += current_pause_duration
+  ```
+
+**技術的なポイント**:
+- 実行中（一時停止中も含む）は常に `total_paused_seconds` を加算
+- 一時停止中はさらに現在の一時停止時間も暫定的に加算
+
+**成果**: 一時停止→再開後も進行状況が正しく保持される
+
+---
+
+#### 修正9: タイマー欄とタイマー一覧の比率を2:1に変更（完了） ✅
+
+**問題**: 1:1の比率ではタイマー表示が小さい
+
+**要望**: タイマー欄をより大きく表示したい
+
+**修正内容**:
+
+**編集したファイル**: `frontend/src/App.jsx`
+
+- **変更内容**:
+  ```javascript
+  // 修正前
+  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <div className="space-y-6">  {/* 1/2幅 */}
+    <div>  {/* 1/2幅 */}
+
+  // 修正後
+  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div className="lg:col-span-2 space-y-6">  {/* 2/3幅 */}
+    <div className="lg:col-span-1">  {/* 1/3幅 */}
+  ```
+
+**技術的なポイント**:
+- グリッドを3列に変更（`grid-cols-3`）
+- タイマー欄が2列分（`col-span-2`）、タイマー一覧が1列分（`col-span-1`）を占有
+
+**成果**: PC版で2:1の比率、タイマーが大きく見やすくなった
+
+---
+
+#### 修正10: タイマー表示サイズをより大きく（完了） ✅
+
+**問題**: タイマーの数字をもう少し大きくしたい
+
+**修正内容**:
+
+**編集したファイル**: `frontend/src/components/timer/CurrentTimer.jsx`
+
+- **変更内容**: `text-8xl` → `text-9xl`
+  - `text-8xl`: 6rem (96px)
+  - `text-9xl`: 8rem (128px)
+  - 約33%大きくなった
+
+**成果**: タイマーの数字がより大きく、遠くからも見やすくなった
+
+---
+
+### 実装ファイル一覧（UI/UX改善とバグ修正）
+
+**編集したファイル（7個）**:
+
+**バックエンド（2個）**:
+1. `backend/apps/timers/views.py` - pause_timer の経過時間計算ロジック修正
+2. `backend/apps/timers/serializers.py` - member1/2/3フィールド追加、進行状況計算ロジック修正
+
+**フロントエンド（5個）**:
+3. `frontend/src/components/admin/TimerFormModal.jsx` - 成功メッセージ削除
+4. `frontend/src/components/timer/CurrentTimer.jsx` - tabular-nums適用、text-9xl適用
+5. `frontend/src/components/timer/SortableTimerItem.jsx` - tabular-nums適用、実行中ドラッグ無効化
+6. `frontend/src/components/timer/TimerListItem.jsx` - tabular-nums適用
+7. `frontend/src/components/timer/TimeDifferenceDisplay.jsx` - tabular-nums適用
+8. `frontend/src/App.jsx` - 並び替え時タイマー自動切り替え、WebSocketリスナー修正、レイアウト比率変更
+
+**変更行数**: 約60行追加、約30行修正
+
+---
+
+### 実装した機能まとめ
+
+✅ **表示の正確性向上**:
+- 一時停止時の表示時間の一貫性確保
+- 一時停止→再開時の進行状況保持
+
+✅ **UX改善**:
+- 不要な成功メッセージ削除
+- タイマー編集時の担当者自動選択
+- フォント改善（tabular-nums、斜線なしゼロ）
+- タイマー表示サイズ拡大（text-9xl）
+- レイアウト比率改善（2:1）
+
+✅ **操作性向上**:
+- 実行中タイマーのドラッグ無効化（誤操作防止）
+- 並び替え時のタイマー自動切り替え
+
+✅ **バグ修正**:
+- WebSocketリスナーの依存配列問題解決
+- タイマー作成時のリスト更新問題解決
+
+---
+
+### 動作確認結果（2026-01-08）
+
+**確認項目**:
+- ✅ 一時停止時の表示が正確（0:55で止めたら0:55表示）
+- ✅ タイマー作成・更新時にアラート非表示
+- ✅ タイマー編集時に担当者が自動選択される
+- ✅ ゼロに斜線が入らない（tabular-nums）
+- ✅ 実行中タイマーがドラッグ不可
+- ✅ 並び替え後、タイマー欄が新しい1番目に切り替わる
+- ✅ タイマー作成時にリアルタイムでリスト更新
+- ✅ 一時停止→再開時の進行状況が正しい
+- ✅ タイマー欄が大きく表示される（2:1比率、text-9xl）
+
+**ユーザー確認**: 全て正常動作
+
+---
+
+**最終更新**: 2026-01-08（UI/UX改善とバグ修正完了）

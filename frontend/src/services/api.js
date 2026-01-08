@@ -81,4 +81,10 @@ export const reorderTimers = async (timerIds) => {
   return response.data;
 };
 
+// 全タイマー削除（全完了時のみ）
+export const deleteAllTimers = async () => {
+  const response = await api.post('/api/timers/delete-all/');
+  return response.data;
+};
+
 export default api;

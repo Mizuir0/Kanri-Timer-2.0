@@ -13,10 +13,8 @@ function App() {
   const {
     updateTimerState,
     updateTimerList,
-    remainingSeconds,
+    setCurrentTimer,
     setRemainingSeconds,
-    isRunning,
-    isPaused,
     isTimerFormOpen,
     editingTimer,
     closeTimerForm,
@@ -43,7 +41,7 @@ function App() {
           const firstIncompleteTimer = timersData.find(t => !t.is_completed);
           if (firstIncompleteTimer) {
             stateData.current_timer = firstIncompleteTimer;
-            stateData.remaining_seconds = firstIncompleteTimer.minutes * 60;
+            // remaining_secondsはバックエンドで計算されるので設定不要
             console.log('[App] 最初のタイマーを自動セット:', firstIncompleteTimer.band_name);
           }
         }
@@ -76,6 +74,22 @@ function App() {
     const handleTimerListUpdate = (data) => {
       console.log('[App] タイマーリスト更新:', data);
       updateTimerList(data);
+
+      // タイマーが開始されていない場合、最初の未完了タイマーを自動セット
+      // 最新の状態を取得するため、useTimerStore.getState() を使用
+      const { isRunning: currentIsRunning, currentTimer: currentCurrentTimer } = useTimerStore.getState();
+
+      if (!currentIsRunning && data.length > 0) {
+        const firstIncompleteTimer = data.find(t => !t.is_completed);
+        if (firstIncompleteTimer) {
+          // 現在のタイマーと異なる場合のみ更新
+          if (!currentCurrentTimer || currentCurrentTimer.id !== firstIncompleteTimer.id) {
+            setCurrentTimer(firstIncompleteTimer);
+            setRemainingSeconds(firstIncompleteTimer.minutes * 60);
+            console.log('[App] 並び替え検知: 新しい最初のタイマーを自動セット:', firstIncompleteTimer.band_name);
+          }
+        }
+      }
     };
 
     // 接続確立イベント
@@ -102,21 +116,10 @@ function App() {
       websocketService.off('connection_lost', handleConnectionLost);
       websocketService.disconnect();
     };
-  }, [updateTimerState, updateTimerList]);
+  }, [updateTimerState, updateTimerList, setCurrentTimer, setRemainingSeconds]);
 
-  // クライアント側でカウントダウン（表示のスムーズさのため）
-  useEffect(() => {
-    // isRunningがtrueで、isPausedがfalseの時のみカウントダウン
-    if (!isRunning || isPaused) {
-      return;
-    }
-
-    const intervalId = setInterval(() => {
-      setRemainingSeconds(Math.max(0, remainingSeconds - 1));
-    }, 1000);
-
-    return () => clearInterval(intervalId);
-  }, [remainingSeconds, setRemainingSeconds, isRunning, isPaused]);
+  // クライアント側のカウントダウンは削除
+  // WebSocketからの更新を信頼することで、表示のズレを防ぐ
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -130,16 +133,16 @@ function App() {
           <TimeDifferenceDisplay />
         </div>
 
-        {/* メインコンテンツ: PC版は2カラム、モバイル版は縦積み */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* 左カラム: 現在のタイマーとコントロール */}
-          <div className="space-y-6">
+        {/* メインコンテンツ: PC版は2:1比率、モバイル版は縦積み */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* 左カラム: 現在のタイマーとコントロール (2/3幅) */}
+          <div className="lg:col-span-2 space-y-6">
             <CurrentTimer />
             <TimerControls />
           </div>
 
-          {/* 右カラム: タイマー一覧 */}
-          <div>
+          {/* 右カラム: タイマー一覧 (1/3幅) */}
+          <div className="lg:col-span-1">
             <TimerList />
           </div>
         </div>

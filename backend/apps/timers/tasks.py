@@ -16,12 +16,18 @@ def update_timer_state():
     try:
         timer_state = TimerState.load()
 
-        # タイマーが実行中でない、または一時停止中の場合は何もしない
-        if not timer_state.is_running or timer_state.is_paused:
+        # タイマーが実行中でない場合は何もしない
+        if not timer_state.is_running:
             return
 
         # 現在のタイマーがない場合は何もしない
         if not timer_state.current_timer:
+            return
+
+        # 一時停止中の場合はWebSocket配信のみ（タイマー完了チェックはしない）
+        if timer_state.is_paused:
+            logger.debug(f'タイマー一時停止中: {timer_state.current_timer.band_name}')
+            broadcast_timer_state()
             return
 
         # 経過時間を計算
@@ -57,8 +63,11 @@ def complete_current_timer(timer_state):
     try:
         current_timer = timer_state.current_timer
 
-        # 実経過時間を計算
-        actual_seconds = int((timezone.now() - timer_state.started_at).total_seconds())
+        # タイマーの経過時間を計算
+        timer_elapsed = int((timezone.now() - timer_state.started_at).total_seconds())
+
+        # actual_seconds = タイマー経過時間 + 累積一時停止時間
+        actual_seconds = timer_elapsed + timer_state.total_paused_seconds
 
         # 現在のタイマーを完了マーク
         current_timer.actual_seconds = actual_seconds
@@ -78,6 +87,7 @@ def complete_current_timer(timer_state):
             timer_state.started_at = timezone.now()
             timer_state.paused_at = None
             timer_state.elapsed_seconds = 0
+            timer_state.total_paused_seconds = 0
             timer_state.is_running = True
             timer_state.is_paused = False
             timer_state.save()
@@ -89,6 +99,7 @@ def complete_current_timer(timer_state):
             timer_state.started_at = None
             timer_state.paused_at = None
             timer_state.elapsed_seconds = 0
+            timer_state.total_paused_seconds = 0
             timer_state.is_running = False
             timer_state.is_paused = False
             timer_state.save()

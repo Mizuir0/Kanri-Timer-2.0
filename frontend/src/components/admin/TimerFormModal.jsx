@@ -92,11 +92,9 @@ const TimerFormModal = ({ isOpen, onClose, timer = null }) => {
       if (isEditMode) {
         // 編集
         await updateTimer(timer.id, formData);
-        alert('タイマーを更新しました。');
       } else {
         // 新規作成
         await createTimer(formData);
-        alert('タイマーを作成しました。');
       }
 
       onClose();

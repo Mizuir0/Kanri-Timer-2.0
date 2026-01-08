@@ -73,6 +73,7 @@ def start_timer(request):
         timer_state.started_at = timezone.now()
         timer_state.paused_at = None
         timer_state.elapsed_seconds = 0
+        timer_state.total_paused_seconds = 0
         timer_state.is_running = True
         timer_state.is_paused = False
         timer_state.save()
@@ -100,6 +101,7 @@ def start_timer(request):
 def get_timers(request):
     """
     全タイマー一覧を取得
+    実行中タイマーの暫定時間差を含めてリアルタイム更新
 
     GET /api/timers/
     """
@@ -108,7 +110,7 @@ def get_timers(request):
         serializer = TimerSerializer(timers, many=True)
         return Response(serializer.data)
     except Exception as e:
-        logger.error(f'get_timers error: {e}')
+        logger.error(f'get_timers error: {e}', exc_info=True)
         return Response(
             {'detail': 'タイマー一覧の取得に失敗しました。'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -139,9 +141,13 @@ def pause_timer(request):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # 経過時間を計算
+        # 表示される残り時間を基準に経過時間を保存（表示の一貫性を保つ）
+        import math
         elapsed = (timezone.now() - timer_state.started_at).total_seconds()
-        timer_state.elapsed_seconds = int(elapsed)
+        total_seconds = timer_state.current_timer.minutes * 60
+        remaining = total_seconds - elapsed
+        display_remaining = max(0, math.ceil(remaining))
+        timer_state.elapsed_seconds = total_seconds - display_remaining
         timer_state.paused_at = timezone.now()
         timer_state.is_paused = True
         timer_state.save()
@@ -189,6 +195,10 @@ def resume_timer(request):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        # 一時停止していた時間を累積
+        paused_duration = int((timezone.now() - timer_state.paused_at).total_seconds())
+        timer_state.total_paused_seconds += paused_duration
+
         # started_at を調整（経過時間を考慮）
         timer_state.started_at = timezone.now() - timedelta(seconds=timer_state.elapsed_seconds)
         timer_state.paused_at = None
@@ -233,13 +243,21 @@ def skip_timer(request):
 
         current_timer = timer_state.current_timer
 
-        # 実経過時間を計算
+        # タイマーの経過時間を計算
         if timer_state.is_paused:
-            actual_seconds = timer_state.elapsed_seconds
+            timer_elapsed = timer_state.elapsed_seconds
+            # 現在の一時停止時間も加算
+            current_pause = int((timezone.now() - timer_state.paused_at).total_seconds())
+            total_paused = timer_state.total_paused_seconds + current_pause
         elif timer_state.is_running:
-            actual_seconds = int((timezone.now() - timer_state.started_at).total_seconds())
+            timer_elapsed = int((timezone.now() - timer_state.started_at).total_seconds())
+            total_paused = timer_state.total_paused_seconds
         else:
-            actual_seconds = 0
+            timer_elapsed = 0
+            total_paused = 0
+
+        # actual_seconds = タイマー経過時間 + 累積一時停止時間
+        actual_seconds = timer_elapsed + total_paused
 
         # 現在のタイマーを完了マーク
         current_timer.actual_seconds = actual_seconds
@@ -259,6 +277,7 @@ def skip_timer(request):
             timer_state.started_at = timezone.now()
             timer_state.paused_at = None
             timer_state.elapsed_seconds = 0
+            timer_state.total_paused_seconds = 0
             timer_state.is_running = True
             timer_state.is_paused = False
             timer_state.save()
@@ -281,6 +300,7 @@ def skip_timer(request):
             timer_state.started_at = None
             timer_state.paused_at = None
             timer_state.elapsed_seconds = 0
+            timer_state.total_paused_seconds = 0
             timer_state.is_running = False
             timer_state.is_paused = False
             timer_state.save()
@@ -385,6 +405,15 @@ def create_timer(request):
         )
 
         logger.info(f'タイマー作成: {timer.band_name} (order: {timer.order})')
+
+        # current_timerがnullの場合、新規作成したタイマーを自動セット
+        timer_state = TimerState.load()
+        if not timer_state.current_timer:
+            timer_state.current_timer = timer
+            timer_state.save()
+            logger.info(f'current_timerを自動設定: {timer.band_name}')
+            # タイマー状態も配信
+            broadcast_timer_state()
 
         # WebSocketで配信
         broadcast_timer_list()
@@ -626,5 +655,64 @@ def reorder_timers(request):
         logger.error(f'reorder_timers error: {e}', exc_info=True)
         return Response(
             {'detail': 'タイマーの順序変更に失敗しました。'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+def delete_all_timers(request):
+    """
+    全てのタイマーを削除（全タイマー完了時のみ可能）
+
+    POST /api/timers/delete-all/
+    """
+    try:
+        # タイマーが存在するかチェック
+        timer_count = Timer.objects.count()
+        if timer_count == 0:
+            return Response(
+                {'detail': 'タイマーが存在しません。'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 全タイマーが完了しているかチェック
+        incomplete_count = Timer.objects.filter(completed_at__isnull=True).count()
+        if incomplete_count > 0:
+            return Response(
+                {'detail': '未完了のタイマーが存在するため、全削除できません。'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # トランザクション内で全削除とTimerStateリセット
+        with transaction.atomic():
+            # 全タイマーを削除
+            deleted_count = Timer.objects.all().delete()[0]
+
+            # TimerStateをリセット
+            timer_state = TimerState.load()
+            timer_state.current_timer = None
+            timer_state.started_at = None
+            timer_state.paused_at = None
+            timer_state.elapsed_seconds = 0
+            timer_state.total_paused_seconds = 0
+            timer_state.is_running = False
+            timer_state.is_paused = False
+            timer_state.save()
+
+        logger.info(f'全タイマー削除: {deleted_count}件')
+
+        # WebSocketで配信（状態とリストの両方）
+        broadcast_timer_state()
+        broadcast_timer_list()
+
+        return Response({
+            'detail': f'{deleted_count}件のタイマーを削除しました。',
+            'deleted_count': deleted_count
+        })
+
+    except Exception as e:
+        logger.error(f'delete_all_timers error: {e}', exc_info=True)
+        return Response(
+            {'detail': '全タイマーの削除に失敗しました。'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )

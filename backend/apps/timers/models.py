@@ -78,6 +78,7 @@ class TimerState(models.Model):
     started_at = models.DateTimeField('開始時刻', null=True, blank=True)
     paused_at = models.DateTimeField('一時停止時刻', null=True, blank=True)
     elapsed_seconds = models.IntegerField('経過時間（秒）', default=0)
+    total_paused_seconds = models.IntegerField('累積一時停止時間（秒）', default=0)
     is_running = models.BooleanField('実行中', default=False)
     is_paused = models.BooleanField('一時停止中', default=False)
     updated_at = models.DateTimeField('更新日時', auto_now=True)

@@ -22,7 +22,7 @@ const TimeDifferenceDisplay = () => {
     <div className={`p-4 border-l-4 ${getColorClass()}`}>
       <div className="text-center">
         <p className="text-sm font-medium">全体の進行状況</p>
-        <p className="text-2xl font-bold mt-1">{totalTimeDifferenceDisplay}</p>
+        <p className="text-2xl font-bold tabular-nums mt-1">{totalTimeDifferenceDisplay}</p>
       </div>
     </div>
   );

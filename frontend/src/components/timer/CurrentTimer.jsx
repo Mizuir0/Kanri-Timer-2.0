@@ -35,7 +35,7 @@ const CurrentTimer = () => {
       <div className="text-center">
         <h3 className="text-4xl font-bold mb-6">{currentTimer.band_name}</h3>
 
-        <div className="text-8xl font-bold text-gray-800 mb-6">
+        <div className="text-9xl font-bold tabular-nums text-gray-800 mb-6">
           {formatTime(remainingSeconds)}
         </div>
 

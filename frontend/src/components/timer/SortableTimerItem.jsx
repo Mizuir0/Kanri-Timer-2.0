@@ -11,7 +11,7 @@ const SortableTimerItem = ({ timer, isCurrent, isMobile }) => {
   // Sortable hooks
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: timer.id,
-    disabled: timer.is_completed || isMobile, // 完了済みまたはモバイルではドラッグ無効
+    disabled: timer.is_completed || isMobile || (isCurrent && isRunning), // 完了済み、モバイル、または実行中ではドラッグ無効
   });
 
   const style = {
@@ -87,8 +87,8 @@ const SortableTimerItem = ({ timer, isCurrent, isMobile }) => {
       onMouseLeave={() => setIsHovered(false)}
     >
       <div className="flex items-center gap-2">
-        {/* ドラッグハンドル（PC版のみ、未完了タイマーのみ） */}
-        {!isMobile && !timer.is_completed && (
+        {/* ドラッグハンドル（PC版のみ、未完了タイマーのみ、実行中でない） */}
+        {!isMobile && !timer.is_completed && !(isCurrent && isRunning) && (
           <div {...attributes} {...listeners} className="cursor-grab text-gray-400 hover:text-gray-600">
             <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
               <path d="M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 7a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 12a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 7a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 12a2 2 0 1 0 0 4 2 2 0 0 0 0-4z" />
@@ -99,20 +99,25 @@ const SortableTimerItem = ({ timer, isCurrent, isMobile }) => {
         {/* ステータスアイコン */}
         <span className="text-lg">{getStatusIcon()}</span>
 
-        {/* バンド名 */}
-        <span
-          className={`
-            flex-1 font-medium
-            ${timer.completed_at ? 'line-through text-gray-500' : 'text-gray-900'}
-            ${isCurrent ? 'font-bold text-blue-700' : ''}
-          `}
-        >
-          {timer.band_name}
-        </span>
+        {/* バンド名とメンバー */}
+        <div className="flex-1">
+          <div
+            className={`
+              font-medium
+              ${timer.completed_at ? 'line-through text-gray-500' : 'text-gray-900'}
+              ${isCurrent ? 'font-bold text-blue-700' : ''}
+            `}
+          >
+            {timer.band_name}
+          </div>
+          <div className="text-xs text-gray-500 mt-0.5">
+            {timer.members && timer.members.join('・')}
+          </div>
+        </div>
 
         {/* 時間差（完了時のみ） */}
         {timer.completed_at && timer.time_difference !== null && (
-          <span className={`text-sm font-medium ${getTimeDifferenceColor()}`}>
+          <span className={`text-sm font-medium tabular-nums ${getTimeDifferenceColor()}`}>
             {formatTimeDifference()}
           </span>
         )}
