@@ -2851,3 +2851,210 @@ User-Agentではなくメディアクエリを使用することで、以下の�
 ---
 
 **最終更新**: 2026-01-08（MVP Step 6: レスポンシブ対応とデバイス判定完了）
+
+---
+
+## リファクタリング: コード可読性の向上
+
+**実施日**: 2026-01-09
+
+### 概要
+
+コードベース全体をレビューし、可読性向上のためのリファクタリングを実施。主に以下の2点を改善:
+
+1. **時間フォーマット処理のユーティリティ化**（フロントエンド）
+2. **バリデーションロジックの共通関数化**（バックエンド）
+
+---
+
+### 1. 時間フォーマットのユーティリティ化
+
+#### 問題点
+
+時間差の表示形式（「+1:30 押し」など）と色判定のロジックが5箇所に重複していた:
+
+- `timerStore.js`
+- `SortableTimerItem.jsx`
+- `TimerListItem.jsx`
+- `TimeDifferenceDisplay.jsx`
+- `serializers.py`（バックエンド）
+
+```javascript
+// 重複していたコード（各ファイルに同じ内容が存在）
+const minutes = Math.floor(absDiff / 60);
+const seconds = absDiff % 60;
+const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+if (diff > 0) return `+${timeStr} 押し`;
+if (diff < 0) return `-${timeStr} 巻き`;
+return '定刻通り';
+```
+
+#### 解決策
+
+`frontend/src/utils/timeFormat.js`に共通関数を追加:
+
+```javascript
+/**
+ * 時間差（秒）を表示形式に変換
+ * @param {number} seconds - 時間差（秒）。正の値は押し、負の値は巻き
+ * @returns {string} - 「+1:30 押し」「-0:45 巻き」「定刻通り」形式
+ */
+export const formatTimeDifference = (seconds) => {
+  if (seconds === 0 || seconds === null || seconds === undefined) {
+    return '定刻通り';
+  }
+
+  const absDiff = Math.abs(seconds);
+  const minutes = Math.floor(absDiff / 60);
+  const secs = absDiff % 60;
+  const timeStr = `${minutes}:${secs.toString().padStart(2, '0')}`;
+
+  if (seconds > 0) {
+    return `+${timeStr} 押し`;
+  }
+  return `-${timeStr} 巻き`;
+};
+
+/**
+ * 時間差に応じたTailwind CSSカラークラスを返す
+ * @param {number} seconds - 時間差（秒）
+ * @returns {string} - Tailwind CSSクラス
+ */
+export const getTimeDifferenceColor = (seconds) => {
+  if (seconds > 0) return 'text-red-600';    // 押し
+  if (seconds < 0) return 'text-green-600';  // 巻き
+  return 'text-gray-600';                     // 定刻通り
+};
+```
+
+#### 修正ファイル
+
+| ファイル | 変更内容 |
+|---------|---------|
+| `utils/timeFormat.js` | `formatTimeDifference`、`getTimeDifferenceColor`を追加 |
+| `timerStore.js` | ユーティリティ関数を使用（約15行削減） |
+| `SortableTimerItem.jsx` | ユーティリティ関数を使用（約20行削減） |
+| `TimerListItem.jsx` | ユーティリティ関数を使用（約30行削減） |
+
+---
+
+### 2. バリデーションロジックの共通関数化
+
+#### 問題点
+
+`create_timer`と`update_timer`で約45行のバリデーションコードが重複していた:
+
+```python
+# 重複していたコード（create_timerとupdate_timerの両方に存在）
+band_name = request.data.get('band_name', '').strip()
+if not band_name:
+    return Response({'detail': 'バンド名は必須です。'}, status=400)
+
+if not minutes or minutes <= 0:
+    return Response({'detail': '予定時間は1分以上で指定してください。'}, status=400)
+
+# ... 同様のバリデーションが続く（約40行）
+```
+
+#### 解決策
+
+`backend/apps/timers/views.py`に共通関数を追加:
+
+```python
+def _validate_timer_data(data):
+    """
+    タイマーデータのバリデーション
+
+    Args:
+        data: リクエストデータ
+
+    Returns:
+        tuple: (error_response, validated_data)
+        - error_response: バリデーションエラー時はResponse、成功時はNone
+        - validated_data: バリデーション成功時は検証済みデータのdict
+    """
+    from apps.members.models import Member
+
+    band_name = data.get('band_name', '').strip()
+    minutes = data.get('minutes')
+    member1_id = data.get('member1_id')
+    member2_id = data.get('member2_id')
+    member3_id = data.get('member3_id')
+
+    # 必須フィールドチェック
+    if not band_name:
+        return Response(
+            {'detail': 'バンド名は必須です。'},
+            status=status.HTTP_400_BAD_REQUEST
+        ), None
+
+    # ... 他のバリデーション ...
+
+    return None, {
+        'band_name': band_name,
+        'minutes': minutes,
+        'member1': member1,
+        'member2': member2,
+        'member3': member3,
+    }
+```
+
+#### 使用例
+
+```python
+# create_timer / update_timer での使用
+error_response, validated_data = _validate_timer_data(request.data)
+if error_response:
+    return error_response
+
+# validated_dataを使ってタイマー作成/更新
+timer = Timer.objects.create(
+    band_name=validated_data['band_name'],
+    minutes=validated_data['minutes'],
+    # ...
+)
+```
+
+#### 修正ファイル
+
+| ファイル | 変更内容 |
+|---------|---------|
+| `views.py` | `_validate_timer_data`関数を追加 |
+| `create_timer` | バリデーションコードを関数呼び出しに置換（約45行削減） |
+| `update_timer` | バリデーションコードを関数呼び出しに置換（約45行削減） |
+
+---
+
+### 削減効果
+
+| 項目 | Before | After | 削減 |
+|------|--------|-------|------|
+| フロントエンド重複コード | 約65行 | 5行 | **-60行** |
+| バックエンド重複コード | 約90行 | 8行 | **-82行** |
+| **合計** | 約155行 | 13行 | **-142行** |
+
+---
+
+### メリット
+
+1. **保守性向上**: 時間フォーマットやバリデーションルールの変更が1箇所で済む
+2. **バグ防止**: 重複コードの修正漏れリスクを排除
+3. **可読性向上**: 各コンポーネント/関数がシンプルになり、意図が明確に
+4. **テスト容易性**: ユーティリティ関数を単体でテスト可能
+
+---
+
+### 修正ファイル一覧
+
+#### フロントエンド（4ファイル）
+- **EDIT** `frontend/src/utils/timeFormat.js` - ユーティリティ関数追加
+- **EDIT** `frontend/src/stores/timerStore.js` - ユーティリティ関数使用
+- **EDIT** `frontend/src/components/timer/SortableTimerItem.jsx` - ユーティリティ関数使用
+- **EDIT** `frontend/src/components/timer/TimerListItem.jsx` - ユーティリティ関数使用
+
+#### バックエンド（1ファイル）
+- **EDIT** `backend/apps/timers/views.py` - バリデーション関数追加、create_timer/update_timer更新
+
+---
+
+**最終更新**: 2026-01-09（リファクタリング: コード可読性の向上）

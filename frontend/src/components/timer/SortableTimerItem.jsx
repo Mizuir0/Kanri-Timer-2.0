@@ -3,6 +3,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { useTimerStore } from '../../stores/timerStore';
 import { deleteTimer } from '../../services/api';
 import { useState } from 'react';
+import { formatTimeDifference, getTimeDifferenceColor } from '../../utils/timeFormat';
 
 const SortableTimerItem = ({ timer, isCurrent, isMobile }) => {
   const { openTimerForm, isRunning } = useTimerStore();
@@ -51,28 +52,6 @@ const SortableTimerItem = ({ timer, isCurrent, isMobile }) => {
     return '⚪';
   };
 
-  // 時間差の色
-  const getTimeDifferenceColor = () => {
-    if (!timer.time_difference) return '';
-    const diff = timer.time_difference;
-    if (diff > 0) return 'text-red-600'; // 押し
-    if (diff < 0) return 'text-green-600'; // 巻き
-    return 'text-gray-600'; // 定刻通り
-  };
-
-  // 時間差フォーマット
-  const formatTimeDifference = () => {
-    if (!timer.time_difference) return '';
-    const absDiff = Math.abs(timer.time_difference);
-    const minutes = Math.floor(absDiff / 60);
-    const seconds = absDiff % 60;
-    const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-
-    if (timer.time_difference > 0) return `+${timeStr} 押し`;
-    if (timer.time_difference < 0) return `-${timeStr} 巻き`;
-    return '定刻通り';
-  };
-
   return (
     <div
       ref={setNodeRef}
@@ -117,8 +96,8 @@ const SortableTimerItem = ({ timer, isCurrent, isMobile }) => {
 
         {/* 時間差（完了時のみ） */}
         {timer.completed_at && timer.time_difference !== null && (
-          <span className={`text-sm font-medium tabular-nums ${getTimeDifferenceColor()}`}>
-            {formatTimeDifference()}
+          <span className={`text-sm font-medium tabular-nums ${getTimeDifferenceColor(timer.time_difference)}`}>
+            {formatTimeDifference(timer.time_difference)}
           </span>
         )}
 

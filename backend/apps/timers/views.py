@@ -330,6 +330,72 @@ def skip_timer(request):
 # CRUD Operations (MVP Step 3)
 # ============================================================================
 
+
+def _validate_timer_data(data):
+    """
+    タイマーデータのバリデーション
+
+    Args:
+        data: リクエストデータ
+
+    Returns:
+        tuple: (error_response, validated_data)
+        - error_response: バリデーションエラー時はResponse、成功時はNone
+        - validated_data: バリデーション成功時は検証済みデータのdict
+    """
+    from apps.members.models import Member
+
+    band_name = data.get('band_name', '').strip()
+    minutes = data.get('minutes')
+    member1_id = data.get('member1_id')
+    member2_id = data.get('member2_id')
+    member3_id = data.get('member3_id')
+
+    # 必須フィールドチェック
+    if not band_name:
+        return Response(
+            {'detail': 'バンド名は必須です。'},
+            status=status.HTTP_400_BAD_REQUEST
+        ), None
+
+    if not minutes or minutes <= 0:
+        return Response(
+            {'detail': '予定時間は1分以上で指定してください。'},
+            status=status.HTTP_400_BAD_REQUEST
+        ), None
+
+    if not all([member1_id, member2_id, member3_id]):
+        return Response(
+            {'detail': '担当者3名を全て選択してください。'},
+            status=status.HTTP_400_BAD_REQUEST
+        ), None
+
+    # 重複チェック
+    if len(set([member1_id, member2_id, member3_id])) != 3:
+        return Response(
+            {'detail': '同じメンバーを複数回選択することはできません。'},
+            status=status.HTTP_400_BAD_REQUEST
+        ), None
+
+    # メンバーの存在確認
+    try:
+        member1 = Member.objects.get(id=member1_id, is_active=True)
+        member2 = Member.objects.get(id=member2_id, is_active=True)
+        member3 = Member.objects.get(id=member3_id, is_active=True)
+    except Member.DoesNotExist:
+        return Response(
+            {'detail': '指定されたメンバーが見つかりません。'},
+            status=status.HTTP_404_NOT_FOUND
+        ), None
+
+    return None, {
+        'band_name': band_name,
+        'minutes': minutes,
+        'member1': member1,
+        'member2': member2,
+        'member3': member3,
+    }
+
 @api_view(['POST'])
 def create_timer(request):
     """
@@ -346,49 +412,9 @@ def create_timer(request):
     """
     try:
         # バリデーション
-        band_name = request.data.get('band_name', '').strip()
-        minutes = request.data.get('minutes')
-        member1_id = request.data.get('member1_id')
-        member2_id = request.data.get('member2_id')
-        member3_id = request.data.get('member3_id')
-
-        # 必須フィールドチェック
-        if not band_name:
-            return Response(
-                {'detail': 'バンド名は必須です。'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        if not minutes or minutes <= 0:
-            return Response(
-                {'detail': '予定時間は1分以上で指定してください。'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        if not all([member1_id, member2_id, member3_id]):
-            return Response(
-                {'detail': '担当者3名を全て選択してください。'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # メンバーの存在確認
-        from apps.members.models import Member
-        try:
-            member1 = Member.objects.get(id=member1_id, is_active=True)
-            member2 = Member.objects.get(id=member2_id, is_active=True)
-            member3 = Member.objects.get(id=member3_id, is_active=True)
-        except Member.DoesNotExist:
-            return Response(
-                {'detail': '指定されたメンバーが見つかりません。'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-
-        # 重複チェック
-        if len(set([member1_id, member2_id, member3_id])) != 3:
-            return Response(
-                {'detail': '同じメンバーを複数回選択することはできません。'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        error_response, validated_data = _validate_timer_data(request.data)
+        if error_response:
+            return error_response
 
         # 順序の自動割り当て（最大値 + 1）
         max_order = Timer.objects.aggregate(models.Max('order'))['order__max'] or 0
@@ -396,11 +422,11 @@ def create_timer(request):
 
         # タイマー作成
         timer = Timer.objects.create(
-            band_name=band_name,
-            minutes=minutes,
-            member1=member1,
-            member2=member2,
-            member3=member3,
+            band_name=validated_data['band_name'],
+            minutes=validated_data['minutes'],
+            member1=validated_data['member1'],
+            member2=validated_data['member2'],
+            member3=validated_data['member3'],
             order=new_order
         )
 
@@ -474,55 +500,16 @@ def update_timer(request, timer_id):
             )
 
         # バリデーション
-        band_name = request.data.get('band_name', '').strip()
-        minutes = request.data.get('minutes')
-        member1_id = request.data.get('member1_id')
-        member2_id = request.data.get('member2_id')
-        member3_id = request.data.get('member3_id')
-
-        if not band_name:
-            return Response(
-                {'detail': 'バンド名は必須です。'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        if not minutes or minutes <= 0:
-            return Response(
-                {'detail': '予定時間は1分以上で指定してください。'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        if not all([member1_id, member2_id, member3_id]):
-            return Response(
-                {'detail': '担当者3名を全て選択してください。'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # メンバーの存在確認
-        from apps.members.models import Member
-        try:
-            member1 = Member.objects.get(id=member1_id, is_active=True)
-            member2 = Member.objects.get(id=member2_id, is_active=True)
-            member3 = Member.objects.get(id=member3_id, is_active=True)
-        except Member.DoesNotExist:
-            return Response(
-                {'detail': '指定されたメンバーが見つかりません。'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-
-        # 重複チェック
-        if len(set([member1_id, member2_id, member3_id])) != 3:
-            return Response(
-                {'detail': '同じメンバーを複数回選択することはできません。'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        error_response, validated_data = _validate_timer_data(request.data)
+        if error_response:
+            return error_response
 
         # タイマー更新
-        timer.band_name = band_name
-        timer.minutes = minutes
-        timer.member1 = member1
-        timer.member2 = member2
-        timer.member3 = member3
+        timer.band_name = validated_data['band_name']
+        timer.minutes = validated_data['minutes']
+        timer.member1 = validated_data['member1']
+        timer.member2 = validated_data['member2']
+        timer.member3 = validated_data['member3']
         timer.save()
 
         logger.info(f'タイマー更新: {timer.band_name} (id: {timer.id})')

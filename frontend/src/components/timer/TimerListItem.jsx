@@ -1,3 +1,5 @@
+import { formatTimeDifference, getTimeDifferenceColor } from '../../utils/timeFormat';
+
 const TimerListItem = ({ timer, isCurrent }) => {
   // 完了インジケータを決定
   const getStatusIcon = () => {
@@ -7,38 +9,6 @@ const TimerListItem = ({ timer, isCurrent }) => {
       return '▶️';
     } else {
       return '⚪';
-    }
-  };
-
-  // 時間差の色を決定（完了時のみ表示）
-  const getTimeDifferenceColor = () => {
-    if (!timer.time_difference) return '';
-
-    const diff = timer.time_difference;
-    if (diff > 0) {
-      return 'text-red-600'; // 押し
-    } else if (diff < 0) {
-      return 'text-green-600'; // 巻き
-    } else {
-      return 'text-gray-600'; // 定刻通り
-    }
-  };
-
-  // 時間差を表示形式に変換
-  const formatTimeDifference = () => {
-    if (!timer.time_difference) return '';
-
-    const absDiff = Math.abs(timer.time_difference);
-    const minutes = Math.floor(absDiff / 60);
-    const seconds = absDiff % 60;
-    const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-
-    if (timer.time_difference > 0) {
-      return `+${timeStr} 押し`;
-    } else if (timer.time_difference < 0) {
-      return `-${timeStr} 巻き`;
-    } else {
-      return '定刻通り';
     }
   };
 
@@ -67,8 +37,8 @@ const TimerListItem = ({ timer, isCurrent }) => {
 
         {/* 時間差（完了時のみ） */}
         {timer.completed_at && timer.time_difference !== null && (
-          <span className={`text-sm font-medium tabular-nums ${getTimeDifferenceColor()}`}>
-            {formatTimeDifference()}
+          <span className={`text-sm font-medium tabular-nums ${getTimeDifferenceColor(timer.time_difference)}`}>
+            {formatTimeDifference(timer.time_difference)}
           </span>
         )}
       </div>

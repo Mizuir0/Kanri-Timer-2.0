@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { getMembers } from '../services/api';
+import { formatTimeDifference } from '../utils/timeFormat';
 
 export const useTimerStore = create((set) => ({
   // タイマー状態
@@ -46,27 +47,10 @@ export const useTimerStore = create((set) => ({
       return sum + (timer.time_difference || 0);
     }, 0);
 
-    // 表示用文字列を生成
-    let displayText = '';
-    if (totalDiff === 0) {
-      displayText = '定刻通り';
-    } else {
-      const absDiff = Math.abs(totalDiff);
-      const minutes = Math.floor(absDiff / 60);
-      const seconds = absDiff % 60;
-      const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-
-      if (totalDiff > 0) {
-        displayText = `+${timeStr} 押し`;
-      } else {
-        displayText = `-${timeStr} 巻き`;
-      }
-    }
-
     set({
       allTimers: timers,
       totalTimeDifference: totalDiff,
-      totalTimeDifferenceDisplay: displayText,
+      totalTimeDifferenceDisplay: formatTimeDifference(totalDiff),
     });
   },
 
