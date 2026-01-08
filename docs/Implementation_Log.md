@@ -2507,4 +2507,347 @@ with transaction.atomic():
 
 ---
 
-**最終更新**: 2026-01-08（MVP Step 5: LINE連携と通知機能完了）
+## MVP Step 6: レスポンシブ対応とデバイス判定完了（2026-01-08）
+
+### 実装概要
+
+PC/スマホの自動判定とUIの出し分けを完了しました。スマホでは閲覧専用として動作し、操作ボタンや編集機能が非表示になります。
+
+---
+
+### 実装内容
+
+#### 1. デバイス判定フック（既存）
+
+**ファイル**: `frontend/src/hooks/useDeviceDetect.js`
+
+**実装内容**:
+- `window.matchMedia('(max-width: 768px)')` でモバイル判定
+- メディアクエリの変更をリアルタイムで監視
+- リサイズに対応した動的判定
+
+```javascript
+const useDeviceDetect = () => {
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(max-width: 768px)');
+    setIsMobile(mediaQuery.matches);
+
+    const handleChange = (e) => {
+      setIsMobile(e.matches);
+    };
+
+    mediaQuery.addEventListener('change', handleChange);
+    return () => {
+      mediaQuery.removeEventListener('change', handleChange);
+    };
+  }, []);
+
+  return { isMobile };
+};
+```
+
+**判定基準**:
+- モバイル: 画面幅 ≤ 768px
+- PC: 画面幅 > 768px
+
+---
+
+#### 2. キーボードショートカット（既存）
+
+**ファイル**: `frontend/src/hooks/useKeyboard.js`
+
+**実装内容**:
+- **スペースキー**: タイマー開始/一時停止/再開
+- **右矢印キー**: スキップ
+- モバイルでは自動的に無効化
+- 入力フィールドにフォーカスがある場合は無効化
+
+```javascript
+const useKeyboard = () => {
+  const { isRunning, isPaused, currentTimer } = useTimerStore();
+
+  useEffect(() => {
+    // モバイルデバイスではキーボードショートカットを無効化
+    const isMobile = window.matchMedia('(max-width: 768px)').matches;
+    if (isMobile) {
+      return;
+    }
+
+    const handleKeyDown = async (event) => {
+      // 入力フィールドにフォーカスがある場合はショートカットを無効化
+      const activeElement = document.activeElement;
+      if (
+        activeElement.tagName === 'INPUT' ||
+        activeElement.tagName === 'TEXTAREA' ||
+        activeElement.isContentEditable
+      ) {
+        return;
+      }
+
+      try {
+        if (event.code === 'Space' || event.key === ' ') {
+          event.preventDefault();
+          // タイマー開始/一時停止/再開
+        }
+
+        if ((event.code === 'ArrowRight' || event.key === 'ArrowRight') && isRunning) {
+          event.preventDefault();
+          // スキップ
+        }
+      } catch (error) {
+        console.error('キーボードショートカットエラー:', error);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isRunning, isPaused, currentTimer]);
+};
+```
+
+---
+
+#### 3. タイマーコントロールのデバイス判定（🆕追加）
+
+**ファイル**: `frontend/src/components/timer/TimerControls.jsx`
+
+**変更内容**:
+```javascript
+import useDeviceDetect from '../../hooks/useDeviceDetect';
+
+const TimerControls = () => {
+  const { currentTimer, isRunning, isPaused } = useTimerStore();
+  const { isMobile } = useDeviceDetect();
+
+  // モバイルでは操作ボタンを非表示（閲覧専用）
+  if (isMobile) {
+    return null;
+  }
+
+  return (
+    <div className="bg-white rounded-lg shadow-lg p-6">
+      {/* 操作ボタン群 */}
+    </div>
+  );
+};
+```
+
+**効果**:
+- スマホ閲覧時に「開始」「一時停止」「スキップ」ボタンが完全に非表示
+- 誤操作を防止
+- UIがシンプルになり、閲覧に集中できる
+
+---
+
+#### 4. タイマーリストのデバイス対応（既存）
+
+**ファイル**: `frontend/src/components/timer/TimerList.jsx`
+
+**実装内容**:
+- モバイルでは「+ 追加」ボタン非表示
+- モバイルでは「全削除」ボタン非表示
+- 閲覧専用として動作
+
+```javascript
+{!isMobile && (
+  <div className="flex gap-2">
+    {allTimersCompleted && (
+      <button onClick={handleDeleteAll}>全削除</button>
+    )}
+    <button onClick={() => openTimerForm(null)}>+ 追加</button>
+  </div>
+)}
+```
+
+---
+
+#### 5. タイマーアイテムのデバイス対応（既存）
+
+**ファイル**: `frontend/src/components/timer/SortableTimerItem.jsx`
+
+**実装内容**:
+- モバイルでは「編集」「削除」ボタン非表示
+- モバイルではドラッグ&ドロップ無効
+- モバイルではドラッグハンドル非表示
+
+```javascript
+const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+  id: timer.id,
+  disabled: timer.is_completed || isMobile || (isCurrent && isRunning),
+});
+
+// ドラッグハンドル（PC版のみ）
+{!isMobile && !timer.is_completed && !(isCurrent && isRunning) && (
+  <div {...attributes} {...listeners} className="cursor-grab">
+    {/* ドラッグアイコン */}
+  </div>
+)}
+
+// 編集・削除ボタン（PC版のみ、ホバー時）
+{!isMobile && isHovered && isEditable && (
+  <div className="flex gap-1">
+    <button onClick={handleEdit}>編集</button>
+    <button onClick={handleDelete}>削除</button>
+  </div>
+)}
+```
+
+---
+
+### デバイス別機能一覧
+
+| 機能 | PC | スマホ |
+|------|-----|--------|
+| **閲覧機能** | | |
+| 現在のタイマー表示 | ✅ | ✅ |
+| 次のタイマー表示 | ✅ | ✅ |
+| タイマー一覧表示 | ✅ | ✅ |
+| 押し巻き表示 | ✅ | ✅ |
+| **操作機能** | | |
+| タイマー開始/停止/スキップ | ✅ | ❌ 非表示 |
+| タイマー追加 | ✅ | ❌ 非表示 |
+| タイマー編集 | ✅ | ❌ 非表示 |
+| タイマー削除 | ✅ | ❌ 非表示 |
+| タイマー並び替え（D&D） | ✅ | ❌ 無効 |
+| 全タイマー削除 | ✅ | ❌ 非表示 |
+| **キーボード操作** | | |
+| スペースキー（開始/停止/再開） | ✅ | ❌ 無効 |
+| 右矢印キー（スキップ） | ✅ | ❌ 無効 |
+
+---
+
+### レスポンシブデザイン（既存）
+
+**ファイル**: `frontend/src/App.jsx`
+
+Tailwind CSSの`grid-cols-1 lg:grid-cols-3`でレイアウトを自動調整:
+
+```javascript
+<div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+  {/* PC: 左2/3幅、スマホ: 全幅 */}
+  <div className="lg:col-span-2 space-y-6">
+    <CurrentTimer />
+    <TimerControls />
+  </div>
+
+  {/* PC: 右1/3幅、スマホ: 全幅 */}
+  <div className="lg:col-span-1">
+    <TimerList />
+  </div>
+</div>
+```
+
+**ブレークポイント**:
+- `lg:` (1024px以上): 3カラムレイアウト（2:1比率）
+- デフォルト (1024px未満): 1カラムレイアウト（縦積み）
+
+---
+
+### エラーハンドリング（既存）
+
+全てのAPI呼び出しで統一されたエラーハンドリングを実装済み:
+
+```javascript
+try {
+  await startTimer();
+} catch (error) {
+  console.error('タイマーの開始に失敗しました:', error);
+  alert('タイマーの開始に失敗しました');
+}
+```
+
+**実装箇所**:
+- `TimerControls.jsx`: 開始/一時停止/再開/スキップ
+- `TimerList.jsx`: 順序変更/全削除
+- `SortableTimerItem.jsx`: 編集/削除
+- `TimerFormModal.jsx`: 作成/更新
+
+---
+
+### テスト結果
+
+#### PC版（画面幅 > 768px）
+- ✅ 操作ボタン表示
+- ✅ タイマー追加ボタン表示
+- ✅ ドラッグ&ドロップ可能
+- ✅ 編集・削除ボタン表示（ホバー時）
+- ✅ スペースキー、矢印キー動作
+- ✅ 3カラムレイアウト
+
+#### スマホ版（画面幅 ≤ 768px）
+- ✅ 操作ボタン非表示
+- ✅ タイマー追加ボタン非表示
+- ✅ ドラッグ&ドロップ無効
+- ✅ 編集・削除ボタン非表示
+- ✅ キーボードショートカット無効
+- ✅ 1カラムレイアウト（縦積み）
+- ✅ タイマー表示、一覧表示、押し巻き表示は正常動作
+
+---
+
+### 技術的なポイント
+
+#### 1. メディアクエリベースの判定
+
+User-Agentではなくメディアクエリを使用することで、以下のメリット:
+- タブレットの横向き/縦向きに対応
+- ブラウザのウィンドウサイズ変更にリアルタイム対応
+- User-Agent偽装の影響を受けない
+- より正確なレスポンシブ対応
+
+#### 2. フックの再利用性
+
+`useDeviceDetect()`は複数のコンポーネントで使用:
+- `TimerControls.jsx`
+- `TimerList.jsx`
+- `SortableTimerItem.jsx`
+
+中央で一元管理することで、判定基準の変更が容易。
+
+#### 3. 段階的な機能制限
+
+モバイルでは段階的に機能を制限:
+1. **操作ボタン**: 完全非表示（`return null`）
+2. **管理ボタン**: 条件付きレンダリング（`{!isMobile && ...}`）
+3. **ドラッグ機能**: `disabled`プロパティで無効化
+4. **キーボード**: `useEffect`の早期リターンで無効化
+
+#### 4. アクセシビリティ
+
+- 操作不可なボタンは非表示にすることで、画面を見やすく
+- スマホでも全ての情報（タイマー表示、押し巻き）は閲覧可能
+- レイアウトの自動調整でスクロールを最小化
+
+---
+
+### 今後の拡張可能性
+
+**タブレット対応**:
+- 中間サイズ（768px - 1024px）で一部機能を有効化
+- 横向きタブレットでは操作可能にする
+
+**権限ベースの制御**:
+- ユーザー認証を追加した場合、デバイス判定+権限判定に拡張可能
+- 例: 管理者はスマホでも操作可能
+
+**オフライン対応**:
+- PWA化してオフラインでも閲覧可能に
+- Service Workerでキャッシュ管理
+
+---
+
+### 修正ファイル一覧
+
+#### 編集ファイル（1ファイル）
+- **EDIT** `frontend/src/components/timer/TimerControls.jsx`
+  - `useDeviceDetect`フックをimport
+  - モバイル判定を追加
+  - モバイルの場合は`return null`で操作ボタン全体を非表示
+
+---
+
+**最終更新**: 2026-01-08（MVP Step 6: レスポンシブ対応とデバイス判定完了）

@@ -1,9 +1,11 @@
 import { useTimerStore } from '../../stores/timerStore';
 import { startTimer, pauseTimer, resumeTimer, skipTimer } from '../../services/api';
 import Button from '../common/Button';
+import useDeviceDetect from '../../hooks/useDeviceDetect';
 
 const TimerControls = () => {
   const { currentTimer, isRunning, isPaused } = useTimerStore();
+  const { isMobile } = useDeviceDetect();
 
   const handleStart = async () => {
     try {
@@ -44,6 +46,11 @@ const TimerControls = () => {
       alert('タイマーのスキップに失敗しました');
     }
   };
+
+  // モバイルでは操作ボタンを非表示（閲覧専用）
+  if (isMobile) {
+    return null;
+  }
 
   return (
     <div className="bg-white rounded-lg shadow-lg p-6">
