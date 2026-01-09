@@ -647,6 +647,41 @@ def reorder_timers(request):
 
 
 @api_view(['POST'])
+def update_settings(request):
+    """
+    設定を更新
+
+    POST /api/settings/
+    Body: {
+        "line_notifications_enabled": true/false
+    }
+    """
+    try:
+        timer_state = TimerState.load()
+
+        # LINE通知設定の更新
+        if 'line_notifications_enabled' in request.data:
+            timer_state.line_notifications_enabled = request.data['line_notifications_enabled']
+            timer_state.save()
+
+            status_text = '有効' if timer_state.line_notifications_enabled else '無効'
+            logger.info(f'LINE通知設定を{status_text}に変更')
+
+        serializer = TimerStateSerializer(timer_state)
+        return Response({
+            'detail': '設定を更新しました。',
+            'state': serializer.data
+        })
+
+    except Exception as e:
+        logger.error(f'update_settings error: {e}', exc_info=True)
+        return Response(
+            {'detail': '設定の更新に失敗しました。'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
 def delete_all_timers(request):
     """
     全てのタイマーを削除（全タイマー完了時のみ可能）

@@ -87,4 +87,14 @@ export const deleteAllTimers = async () => {
   return response.data;
 };
 
+// ============================================================================
+// Settings
+// ============================================================================
+
+// LINE通知設定更新
+export const updateSettings = async (settings) => {
+  const response = await api.post('/api/settings/', settings);
+  return response.data;
+};
+
 export default api;

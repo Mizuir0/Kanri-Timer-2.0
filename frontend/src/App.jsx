@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useTimerStore } from './stores/timerStore';
 import websocketService from './services/websocket';
 import useKeyboard from './hooks/useKeyboard';
-import { getTimerState, getTimers } from './services/api';
+import { getTimerState, getTimers, updateSettings } from './services/api';
 import CurrentTimer from './components/timer/CurrentTimer';
 import TimerControls from './components/timer/TimerControls';
 import TimeDifferenceDisplay from './components/timer/TimeDifferenceDisplay';
@@ -19,7 +19,24 @@ function App() {
     editingTimer,
     closeTimerForm,
     fetchMembers,
+    lineNotificationsEnabled,
+    setLineNotificationsEnabled,
   } = useTimerStore();
+
+  // LINE通知トグルハンドラ
+  const handleLineNotificationToggle = async () => {
+    const newValue = !lineNotificationsEnabled;
+    setLineNotificationsEnabled(newValue); // 楽観的UI更新
+
+    try {
+      await updateSettings({ line_notifications_enabled: newValue });
+      console.log('[App] LINE通知設定を更新:', newValue ? 'ON' : 'OFF');
+    } catch (error) {
+      console.error('[App] LINE通知設定の更新に失敗:', error);
+      setLineNotificationsEnabled(!newValue); // ロールバック
+      alert('設定の更新に失敗しました。');
+    }
+  };
 
   // キーボードショートカットを有効化（MVP Step 2）
   useKeyboard();
@@ -147,14 +164,28 @@ function App() {
           </div>
         </div>
 
-        {/* 開発情報 */}
-        <div className="bg-green-50 border-l-4 border-green-500 p-4 mt-6">
-          <p className="text-sm text-green-700">
-            <strong>MVP Step 3:</strong> CRUD機能（作成・編集・削除・並び替え）
-          </p>
-          <p className="text-xs text-green-600 mt-1">
-            ✅ タイマー作成 | ✅ タイマー編集 | ✅ タイマー削除 | ✅ ドラッグ&ドロップ並び替え
-          </p>
+        {/* 設定セクション */}
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mt-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-medium text-gray-700">LINE通知</p>
+              <p className="text-xs text-gray-500">5分前通知・リハーサル開始/終了通知</p>
+            </div>
+            <button
+              onClick={handleLineNotificationToggle}
+              className={`
+                relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+                ${lineNotificationsEnabled ? 'bg-green-500' : 'bg-gray-300'}
+              `}
+            >
+              <span
+                className={`
+                  inline-block h-4 w-4 transform rounded-full bg-white transition-transform
+                  ${lineNotificationsEnabled ? 'translate-x-6' : 'translate-x-1'}
+                `}
+              />
+            </button>
+          </div>
         </div>
       </main>
 

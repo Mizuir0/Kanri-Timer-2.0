@@ -64,6 +64,7 @@ class TimerStateSerializer(serializers.ModelSerializer):
             'remaining_seconds',
             'is_running',
             'is_paused',
+            'line_notifications_enabled',
             'total_time_difference',
             'total_time_difference_display',
             'updated_at'

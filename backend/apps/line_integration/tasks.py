@@ -26,6 +26,10 @@ def check_and_send_notifications():
     try:
         timer_state = TimerState.load()
 
+        # LINE通知が無効の場合はスキップ
+        if not timer_state.line_notifications_enabled:
+            return
+
         # 実行中でない、または一時停止中の場合はスキップ
         if not timer_state.is_running or not timer_state.current_timer:
             return
@@ -119,6 +123,10 @@ def send_rehearsal_start_notification():
     try:
         timer_state = TimerState.load()
 
+        # LINE通知が無効の場合はスキップ
+        if not timer_state.line_notifications_enabled:
+            return
+
         # 実行中でない場合はスキップ
         if not timer_state.is_running or not timer_state.started_at:
             return
@@ -178,6 +186,12 @@ def send_rehearsal_end_notification():
     送信先: 全てのLINE連携済みメンバー
     """
     try:
+        timer_state = TimerState.load()
+
+        # LINE通知が無効の場合はスキップ
+        if not timer_state.line_notifications_enabled:
+            return
+
         # タイマーの総数を取得
         total_timers = Timer.objects.count()
 
@@ -214,10 +228,7 @@ def send_rehearsal_end_notification():
             logger.warning('LINE連携済みメンバーなし - リハーサル終了通知スキップ')
             return
 
-        # 累計押し巻きを取得
-        timer_state = TimerState.load()
-
-        # 全体の時間差を計算
+        # 全体の時間差を計算（timer_stateは冒頭で取得済み）
         completed_timers = Timer.objects.filter(actual_seconds__isnull=False)
         total_diff = sum(timer.time_difference for timer in completed_timers)
 

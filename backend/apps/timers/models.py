@@ -81,6 +81,7 @@ class TimerState(models.Model):
     total_paused_seconds = models.IntegerField('累積一時停止時間（秒）', default=0)
     is_running = models.BooleanField('実行中', default=False)
     is_paused = models.BooleanField('一時停止中', default=False)
+    line_notifications_enabled = models.BooleanField('LINE通知有効', default=True)
     updated_at = models.DateTimeField('更新日時', auto_now=True)
 
     class Meta:

@@ -1,6 +1,5 @@
 import { create } from 'zustand';
 import { getMembers } from '../services/api';
-import { formatTimeDifference } from '../utils/timeFormat';
 
 export const useTimerStore = create((set) => ({
   // タイマー状態
@@ -8,6 +7,7 @@ export const useTimerStore = create((set) => ({
   remainingSeconds: 0,
   isRunning: false,
   isPaused: false,
+  lineNotificationsEnabled: true,
 
   // タイマーリスト（MVP Step 2）
   allTimers: [],
@@ -36,22 +36,19 @@ export const useTimerStore = create((set) => ({
     remainingSeconds: state.remaining_seconds || 0,
     isRunning: state.is_running,
     isPaused: state.is_paused,
+    lineNotificationsEnabled: state.line_notifications_enabled ?? true,
     totalTimeDifference: state.total_time_difference || 0,
     totalTimeDifferenceDisplay: state.total_time_difference_display || '',
   }),
 
-  // タイマーリストと押し巻き計算を一括更新（MVP Step 2）
-  updateTimerList: (timers) => {
-    // 全体の時間差を計算
-    const totalDiff = timers.reduce((sum, timer) => {
-      return sum + (timer.time_difference || 0);
-    }, 0);
+  // LINE通知設定
+  setLineNotificationsEnabled: (enabled) => set({ lineNotificationsEnabled: enabled }),
 
-    set({
-      allTimers: timers,
-      totalTimeDifference: totalDiff,
-      totalTimeDifferenceDisplay: formatTimeDifference(totalDiff),
-    });
+  // タイマーリスト更新（MVP Step 2）
+  // 注: totalTimeDifference は timer_state_updated イベント（updateTimerState）で更新される
+  //     ここで再計算すると、実行中タイマーの一時停止時間が含まれないため不正確になる
+  updateTimerList: (timers) => {
+    set({ allTimers: timers });
   },
 
   // CRUD アクション（MVP Step 3）
