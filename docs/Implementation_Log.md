@@ -3460,3 +3460,221 @@ git push
 - [ ] Renderアカウントでログイン済み
 
 **準備ができたらPart 1から順番に実施してください。MVP Step 7完了まであと少しです！**
+
+---
+
+# MVP Step 7 実施記録（2026年1月11日）
+
+## 実際のデプロイ構成
+
+当初Renderを予定していたが、無料プランの制限により以下の構成に変更:
+
+| サービス | プラットフォーム | 備考 |
+|---------|-----------------|------|
+| フロントエンド | **Netlify** | 静的サイトホスティング |
+| バックエンド (Web) | **Railway** | Daphne (ASGI) |
+| Celery Worker | **Railway** | バックグラウンドタスク処理 |
+| Celery Beat | **Railway** | 定期タスクスケジューラ |
+| Redis | **Railway** | Celery Broker / Channels |
+| PostgreSQL | **Supabase** | データベース |
+
+### 変更理由
+- **Render**: 無料プランではBackground Workerが使えない
+- **Supabase**: Renderの無料PostgreSQLは1プロジェクトのみ（別プロジェクトで使用済み）
+
+---
+
+## デプロイ手順
+
+### 1. Supabase (PostgreSQL)
+
+1. https://supabase.com/ でプロジェクト作成
+2. Settings → Database → Connection Pooler から接続URLを取得
+3. `?sslmode=require` を末尾に追加
+4. ポートは `6543` (Connection Pooler用)
+
+**DATABASE_URL形式**:
+```
+postgresql://postgres.[project-ref]:[password]@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres?sslmode=require
+```
+
+### 2. Railway
+
+#### 2.1 Redis作成
+1. New → Database → Redis
+2. `REDIS_URL` をコピー
+
+#### 2.2 Web サービス作成
+1. New → GitHub Repo → kanri-timer-v2
+2. Settings:
+   - Root Directory: `backend`
+   - Start Command: `python manage.py migrate && daphne -b 0.0.0.0 -p $PORT backend.asgi:application`
+3. Variables (環境変数):
+
+| Variable | Value |
+|----------|-------|
+| `DATABASE_URL` | Supabaseの接続URL |
+| `REDIS_URL` | RailwayのRedis URL |
+| `SECRET_KEY` | Django用シークレットキー |
+| `DEBUG` | `False` |
+| `ALLOWED_HOSTS` | `*.railway.app,localhost` |
+| `CORS_ALLOWED_ORIGINS` | `https://your-site.netlify.app` |
+| `CSRF_TRUSTED_ORIGINS` | `https://your-app.railway.app` |
+| `DJANGO_SETTINGS_MODULE` | `backend.settings.base` |
+| `CELERY_BROKER_URL` | `${{Redis.REDIS_URL}}` |
+| `CELERY_RESULT_BACKEND` | `${{Redis.REDIS_URL}}` |
+| `LINE_CHANNEL_ACCESS_TOKEN` | LINE Developersから取得 |
+| `LINE_CHANNEL_SECRET` | LINE Developersから取得 |
+
+4. Networking → Generate Domain
+
+#### 2.3 Celery Worker作成
+1. New → GitHub Repo → kanri-timer-v2
+2. Settings:
+   - Root Directory: `backend`
+   - Start Command: `celery -A backend worker --loglevel=info --concurrency=2`
+3. 環境変数: Webサービスと同じ + `C_FORCE_ROOT=true`
+
+#### 2.4 Celery Beat作成
+1. New → GitHub Repo → kanri-timer-v2
+2. Settings:
+   - Root Directory: `backend`
+   - Start Command: `celery -A backend beat --loglevel=info`
+3. 環境変数: Webサービスと同じ + `C_FORCE_ROOT=true`
+
+### 3. Netlify (フロントエンド)
+
+1. https://www.netlify.com/ でGitHubからインポート
+2. Build settings:
+   - Base directory: `frontend`
+   - Build command: `rm -rf node_modules package-lock.json && npm install && npm run build`
+   - Publish directory: `frontend/dist`
+3. Environment variables:
+
+| Variable | Value |
+|----------|-------|
+| `VITE_API_URL` | `https://your-app.railway.app` |
+| `VITE_WS_URL` | `wss://your-app.railway.app/ws/timer/` |
+
+4. SPAルーティング用に `frontend/public/_redirects` を作成:
+```
+/*    /index.html   200
+```
+
+### 4. LINE Webhook設定
+
+LINE Developers Console で Webhook URL を更新:
+```
+https://your-app.railway.app/api/line/webhook/
+```
+
+### 5. UptimeRobot設定 (Supabase一時停止防止)
+
+Supabaseは7日間アクセスがないと一時停止するため、UptimeRobotで監視:
+
+1. https://uptimerobot.com/ でアカウント作成
+2. Monitor追加:
+   - Type: HTTP(s)
+   - URL: `https://your-app.railway.app/health/`
+   - Interval: 24 hours
+
+**注意**: 無料版はHEADリクエストのみ対応のため、`/health/` エンドポイントを追加
+
+---
+
+## 発生した問題と解決策
+
+### 問題1: aiohttpビルドエラー (Render)
+**エラー**: `error: can't find Rust compiler`
+
+**解決策**: `runtime.txt` に Python バージョンを明示
+```
+python-3.11.7
+```
+
+### 問題2: Supabase接続エラー
+**エラー**: `Network is unreachable`
+
+**解決策**:
+- Connection Pooler URL を使用 (ポート6543)
+- `?sslmode=require` を追加
+
+### 問題3: CORS エラー
+**エラー**: `No 'Access-Control-Allow-Origin' header`
+
+**解決策**: Railway環境変数で `CORS_ALLOWED_ORIGINS` を設定
+
+### 問題4: Celery クラッシュ
+**エラー**: メモリ不足でワーカーがクラッシュ
+
+**解決策**: `--concurrency=2` オプション追加
+
+### 問題5: Django Admin CSRFエラー
+**エラー**: `CSRF verification failed`
+
+**解決策**: `CSRF_TRUSTED_ORIGINS` を設定ファイルと環境変数に追加
+
+### 問題6: フロントエンドがlocalhost接続
+**エラー**: APIリクエストが `http://localhost:8000` に送信される
+
+**解決策**: Netlify環境変数名を `VITE_API_BASE_URL` → `VITE_API_URL` に修正
+
+### 問題7: UptimeRobot 405エラー
+**エラー**: `405 Method Not Allowed`
+
+**解決策**: HEADリクエスト対応の `/health/` エンドポイントを追加
+
+---
+
+## 動作確認結果
+
+| 機能 | 結果 |
+|------|------|
+| タイマー作成 | ✅ |
+| タイマー開始/一時停止/再開 | ✅ |
+| タイマースキップ | ✅ |
+| 押し巻き計算 | ✅ |
+| 複数端末リアルタイム同期 | ✅ |
+| LINE通知 | ✅ |
+| LINE通知オン/オフ | ✅ |
+
+---
+
+## 無料プラン制限まとめ
+
+### Railway
+- 月$5のクレジット
+- 超過分は従量課金
+- スリープなし（常時稼働）
+
+### Netlify
+- 帯域幅: 100GB/月
+- ビルド時間: 300分/月
+
+### Supabase
+- データベース: 500MB
+- **7日間アクセスなしで一時停止** → UptimeRobotで対策
+
+---
+
+## 本番環境URL
+
+| サービス | URL |
+|---------|-----|
+| フロントエンド | https://kanri-timer.netlify.app |
+| バックエンドAPI | (Railway URL)/api/ |
+| Django Admin | (Railway URL)/admin/ |
+| ヘルスチェック | (Railway URL)/health/ |
+
+---
+
+## 今後の課題
+
+1. **コスト監視**: Railwayの使用量を定期的に確認
+2. **バックアップ**: Supabaseデータの定期バックアップ
+3. **監視強化**: エラー通知の設定（Sentry等）
+4. **パフォーマンス**: 必要に応じてCelery concurrencyの調整
+
+---
+
+**MVP Step 7 完了！** 🎉
