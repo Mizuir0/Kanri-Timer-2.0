@@ -4,13 +4,23 @@ URLルーティング設定
 
 from django.contrib import admin
 from django.urls import path, include
-from django.http import HttpResponse
+from django.http import HttpResponse, JsonResponse
 from apps.timers.views import update_settings
 
 
 def health_check(request):
-    """ヘルスチェック用エンドポイント（HEAD/GET対応）"""
-    return HttpResponse("OK", status=200)
+    """
+    ヘルスチェック用エンドポイント（HEAD/GET対応）
+    DBにクエリを発行してSupabaseの自動停止を防ぐ
+    """
+    try:
+        # DBにクエリを発行（Supabaseアクティビティとしてカウント）
+        from django.db import connection
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+        return JsonResponse({"status": "ok", "db": "connected"}, status=200)
+    except Exception as e:
+        return JsonResponse({"status": "error", "db": str(e)}, status=500)
 
 
 urlpatterns = [
